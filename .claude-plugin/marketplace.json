@@ -1,0 +1,6 @@
+{
+  "name": "codex-bridge",
+  "owner": { "name": "Flzsh" },
+  "description": "Claude Code plugin: hand routine work to OpenAI Codex and watch it on a Codex card",
+  "plugins": [{ "name": "codex-bridge", "source": "./" }]
+}

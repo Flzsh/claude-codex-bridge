@@ -1,0 +1,4 @@
+runs/
+.claude-plugin/types/
+*.log
+.DS_Store
