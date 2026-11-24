@@ -1,0 +1,22 @@
+# trio-claude-gemini-codex — per-project settings
+# Copied to <repo>/.multimodel/config.yaml on first run. Flat "key: value" only.
+
+# Models (leave empty to use each CLI's default model)
+gemini_model: gemini-4-neon-high   # must be a Gemini model; list with: agy models
+codex_model:            # empty = Codex default; list with: codex (then /model)
+codex_review_model:
+
+# Project commands
+test_command:          # e.g. npm test
+deploy_command:        # e.g. npm run deploy   (empty = stop after merge)
+live_url:              # e.g. https://myapp.com (used for the live check)
+base_branch: main
+
+# How much runs without asking you
+auto_merge: false
+auto_deploy: false
+max_review_rounds: 2
+
+# Timeouts in seconds
+gemini_timeout: 900
+codex_timeout: 2400

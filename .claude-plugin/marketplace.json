@@ -1,0 +1,15 @@
+{
+  "name": "trio-claude-gemini-codex",
+  "description": "A Claude Code skill that runs a feature end to end with Claude, Gemini and Codex working as a team.",
+  "owner": { "name": "garywu000", "url": "https://github.com/garywu000" },
+  "plugins": [
+    {
+      "name": "trio-claude-gemini-codex",
+      "source": "./plugins/trio-claude-gemini-codex",
+      "description": "Claude leads and builds the frontend; Gemini gives independent plans, design review, acceptance tests and screenshot QA; Codex builds backend tickets and reviews the PR. Uses your own subscriptions through their CLIs.",
+      "version": "1.0.0",
+      "category": "development",
+      "tags": ["workflow", "multi-model", "gemini", "codex", "code-review", "testing"]
+    }
+  ]
+}
