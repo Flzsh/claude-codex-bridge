@@ -1,6 +1,6 @@
 # claude-codex-bridge
 
-A Claude Code plugin that lets Claude hand routine work to OpenAI Codex, so your ChatGPT plan does the token-heavy work and your Claude usage goes further, without lowering quality. Since 0.2.0 it can also ask Gemini (through Google's Antigravity CLI) for an independent second plan and a review of interaction and copy.
+A Claude Code plugin that lets Claude hand routine work to OpenAI Codex, so your ChatGPT plan does the token-heavy work and your Claude usage goes further, without lowering quality. It can also ask Gemini (through Google's Antigravity CLI) for an independent second plan and a review of interaction and copy. Since 0.3.0 the three share a project folder, so what one learns the others see, and a desktop app, **Bridge**, is the command center: you watch the workflow happen live, lane by lane, review a plan when it is ready (it carries on by itself after 30 seconds), and steer, pause or decline at any point.
 
 ```
 Claude (plans, routes, checks the result, writes the frontend)
@@ -10,25 +10,81 @@ Claude (plans, routes, checks the result, writes the frontend)
 
 ## The workflow
 
-For a feature or a change worth planning, not a one-line fix:
+Claude sizes every task first and tells you which size it picked; you can change it.
 
-1. You say what you want.
-2. Claude writes a plan; Gemini writes its own without seeing Claude's.
-3. Claude merges them item by item, marking whose idea was adopted and why the other wasn't. You decide.
-4. Claude defines the interfaces and the acceptance checks, hands self-contained backend tasks to Codex, and writes the UI and other design-sensitive code itself.
-5. Gemini reviews the interaction and copy; Codex reviews the diff, at most two rounds.
-6. Claude runs the checks. Nothing is committed, pushed or published without your yes.
+- **Small** (a fix, a question, a quick change): Claude alone. Ask, Do, Check.
+- **Medium** (a bounded feature across a few files): Claude plans and leads; Codex builds one bounded block or reviews the diff once; Gemini takes a quick look where it helps. Ask, Plan, Build, Review, Check & ship.
+- **Large** (a new area, a redesign, unclear requirements, a release): the full flow.
+  1. You say what you want.
+  2. Claude writes a plan; Gemini writes its own without seeing Claude's.
+  3. Claude merges them item by item, marking whose idea was adopted and why the other wasn't. You decide.
+  4. Claude defines the interfaces and the acceptance checks, hands self-contained backend tasks to Codex, and writes the UI and other design-sensitive code itself.
+  5. Gemini reviews the interaction and copy; Codex reviews the diff, at most two rounds.
+  6. Claude runs the checks.
 
-Without Antigravity CLI, Claude writes the plan alone (so there is nothing to merge in step 3) and step 5 has only the Codex review.
+In every size nothing is committed, pushed or published without your yes. Without Antigravity CLI, Gemini's parts are skipped.
 
 ## What's inside
 
-The plugin has four parts:
+The plugin has five parts:
 
 - **A skill** that tells Claude what to hand off (edits, tests, code reading, reviews), what to keep (hard problems, design taste, anything that publishes or touches secrets), how to brief Codex, and to check every result before showing it to you.
 - **A job script** (`skills/codex-bridge/pyr.sh`) that runs one Codex job and gives Claude only Codex's final answer, not the long log.
 - **A Gemini script** (`skills/codex-bridge/agy.sh`) that runs one Gemini job through Antigravity CLI. Gemini answers in text only: it can read files but cannot edit them or run commands, and the script never bypasses Antigravity's permission checks.
-- **A Codex card** above the message box. Collapsed it is one line (`▸ Codex · idle`, or `1 running`). Click it to see recent Codex and Gemini tasks; click a task to see the brief Claude sent and the reply. You get a pop-up when a task finishes. `/codex` toggles the card.
+- **A band** above the message box: one line (`▸ ◆ Bridge · Build · idle   Open app  Console`) with the shared project's stage and what is running. Click its name to list recent Codex and Gemini tasks and open one to see its brief and reply; you get a pop-up when a task finishes. `/codex` toggles the list.
+- **The Bridge app** (below), with the console as a fallback inside Claude Code for terminal and SSH use.
+
+## The Bridge app
+
+The command center for the three agents. You start in Claude as always; when Claude runs a workflow, Bridge shows it live:
+
+- **The flow**: lanes for You, Claude, Gemini and Codex, a box per step going down the page, lines between the steps that follow each other. Whatever is working right now is highlighted and shows what it is doing and how far it has got. Click a step to open it.
+- **The review**: when a plan is ready, Bridge tells you (a notice, and the companion bar) and waits 30 seconds. Approve, pause, steer (type what to change) or decline; with no answer it carries on with the plan. Anything that pushes or publishes waits for a real yes.
+- **The steer box** at the bottom: plain text goes to Claude (picked up at its next step while it works, or as a new prompt when it is idle); start with `@codex` or `@gemini` to ask that agent directly, and its run appears in its lane.
+- **The side pane**: the selected step (progress, brief, result), a page per agent, and the settings (folder, look, companion, Codex model and effort, whether Codex may edit files).
+- **Two looks**: a terminal program, and a hand-drawn one. Switch with Ctrl+T or in the settings.
+- **The companion bar**: a small bar that floats over other windows while anything works or waits for you, with Approve and Pause right in it. Hover it for the steps and the latest events.
+
+Claude writes the flow with `skills/codex-bridge/flow.sh` (the skill says when); Codex and Gemini runs join it by themselves. Everything is in `.bridge/flow.jsonl` in your project, one line per event, plus `.bridge/control/` for your answers.
+
+Open it with **Open app** on the band or `/bridge`. Set it up once (it needs Node.js):
+
+```bash
+cd <plugin folder>/app
+npm ci
+```
+
+`/bridge` says where the plugin folder is if the app isn't set up yet. The app runs from the plugin folder; there is no installer.
+
+## The console
+
+`/bridge console` (or **Console** on the band) opens a pane beside the chat that works like a small terminal for Codex and Gemini, for when the app can't open (a terminal or SSH session). Its top row picks who answers, the Codex model, the effort and whether Codex may edit files. Type a prompt and press Enter; a follow-up continues the same conversation until `/new`.
+
+| Command | Does |
+|---|---|
+| `/codex`, `/gemini` | switch who answers |
+| `/new` | start a fresh conversation |
+| `/model <name>` | Codex model (`gpt-6.2-sol`, `gpt-6.2-astra`, `gpt-6.1-sol`) |
+| `/effort <level>` | effort for the current AI, or `default` |
+| `/mode read` / `/mode write` | whether Codex may edit files in the folder |
+| `/stop` | stop the running prompt |
+| `/project`, `/project start <goal>` | show or start the shared project |
+| `/note <text>` | add a note to the shared log |
+| `/claude [text]` | ask Claude with the last reply attached; alone, put the last reply in your prompt box |
+| `/stage <step>` | move the workflow (ask, plan, merge, decide, build, review, ship), or `next` |
+| `/size <size>` | how much workflow: `small`, `medium` or `large` |
+| `/clear`, `/help` | clear the transcript, list commands |
+
+Every console prompt, in the app or the pane, runs through the job scripts, so it shows in the run list.
+
+## The shared project
+
+So that Claude, Codex and Gemini work from the same facts, a project lives in a `.bridge/` folder in your working folder:
+
+- `project.md`: the goal, who does what (Claude leads, plans, writes the UI and checks; Codex takes self-contained backend tasks and reviews diffs; Gemini writes the second plan and reviews copy; you decide), decisions and open questions.
+- `log.md`: what each agent was asked and answered, plus your notes and Claude's handoffs.
+
+Start one from the app's Workflow screen, or `/project start <goal>` in a console. From then on every Codex and Gemini job is told to read both files, and its reply is added to the log; Claude's skill tells it to read them before working and to record decisions. Add `.bridge/` to `.gitignore` if you don't want it committed. `BRIDGE_PROJECT=off` leaves a job out.
 
 ## Requirements
 
@@ -60,17 +116,17 @@ claude plugin install codex-bridge --marketplace Flzsh/claude-codex-bridge
 
 In the desktop app, where `/plugin` does not run: click + next to the prompt box, then Plugins, Add marketplace with `Flzsh/claude-codex-bridge`, then Add plugin.
 
-Answer `y` to add the marketplace and pick the user scope. The card appears in sessions started after the install.
+Answer `y` to add the marketplace and pick the user scope. The band appears in sessions started after the install.
 
 ## Choosing the model
 
-By default jobs run on `gpt-6.1-sol` at `high` reasoning effort, which suits a ChatGPT Plus quota. To use another model your plan has, set these in the `env` block of `~/.claude/settings.json`:
+By default jobs run on `gpt-6.2-sol` at `high` reasoning effort, which suits a ChatGPT Plus quota. The skill has a short reference (from Artificial Analysis) that Claude checks before picking another model or effort for a job. To change the defaults, set these in the `env` block of `~/.claude/settings.json`:
 
 ```json
 {
   "env": {
-    "CODEX_BRIDGE_MODEL": "gpt-6.1-sol",
-    "CODEX_BRIDGE_EFFORT": "xhigh"
+    "CODEX_BRIDGE_MODEL": "gpt-6.2-sol",
+    "CODEX_BRIDGE_EFFORT": "high"
   }
 }
 ```
@@ -85,7 +141,7 @@ For Gemini, set these in the same `env` block if needed: `AGY_BIN` points at a s
 
 1. Claude writes a short brief: a title line, the goal, the files involved, what not to touch, the checks to run, and the reply format.
 2. `pyr.sh <workdir> <brief-file> [read-only|workspace-write]` runs `codex exec` in that folder with that sandbox. It never uses full access.
-3. The run is saved in the plugin's `runs/` folder (brief, log, reply, status), which is what the card reads.
+3. The run is saved in the plugin's `runs/` folder (brief, log, reply, status), which is what the band, the app and the console read.
 4. Claude reads the reply, checks the diff and runs the checks itself. If the work is wrong it sends one correction, then finishes the job itself.
 
 ## License

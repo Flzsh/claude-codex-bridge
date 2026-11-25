@@ -1,0 +1,20 @@
+{
+  "name": "bridge-app",
+  "private": true,
+  "version": "0.3.0",
+  "description": "Bridge: the desktop app of the claude-codex-bridge plugin",
+  "main": "dist/main.cjs",
+  "scripts": {
+    "build": "node build.mjs",
+    "start": "node build.mjs && electron .",
+    "test": "node build.mjs --tests-only && node --test \"dist-test/*.spec.mjs\"",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@fontsource-variable/literata": "5.3.0",
+    "@types/node": "24.19.2",
+    "electron": "45.2.3",
+    "esbuild": "0.28.2",
+    "typescript": "7.0.2"
+  }
+}

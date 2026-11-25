@@ -1,0 +1,289 @@
+// What both themes share: the flow's events, the app's settings, what is
+// selected, and the actions the owner can take. A theme only draws this and
+// calls these actions; nothing here knows how it looks.
+
+import { fold, focusAt, LANE, type FlowEvent, type Lane, type Step } from '../../../../core/flow'
+
+/** How many events have happened by t (events are sorted by time). */
+function countBy(events: readonly FlowEvent[], t: number): number {
+  let lo = 0, hi = events.length
+  while (lo < hi) { const mid = (lo + hi) >> 1; if ((events[mid]?.t ?? Infinity) <= t) lo = mid + 1; else hi = mid }
+  return lo
+}
+
+export type Theme = 'cli' | 'drawn'
+export type Provider = 'codex' | 'gemini'
+export type GateAnswer = 'approve' | 'decline' | 'steer'
+export type FlowInfo = { id: string; title: string; size: string | null; t: number; state: string | null }
+export type FlowPayload = { flow: FlowInfo | null; events: FlowEvent[]; paused: boolean; flows: FlowInfo[] }
+export type Settings = {
+  workdir: string | null
+  recent: string[]
+  pinned: boolean
+  codexModel: string
+  models: string[]
+  mode: 'read-only' | 'workspace-write'
+  efforts: Record<Provider, string | null>
+  effortChoices: Record<Provider, string[]>
+  companion: 'auto' | 'off'
+  theme: Theme
+  bashError: string
+}
+export type RunDetail = { brief: string; reply: string; logTail: string }
+
+/** The window's door to the main process (preload.ts). */
+export type BridgeApi = {
+  state(): Promise<Settings>
+  flow(): Promise<FlowPayload>
+  on(event: 'state' | 'flow', listener: (payload: unknown) => void): () => void
+  answerGate(gate: string, answer: GateAnswer, text?: string, t0?: number): Promise<{ ok?: boolean; taken?: boolean; error?: string }>
+  setPaused(paused: boolean): Promise<{ ok?: boolean; error?: string }>
+  steer(text: string): Promise<{ ok?: boolean; error?: string; route?: string }>
+  setTheme(theme: Theme): Promise<void>
+  showFlow(id: string | null): Promise<void>
+  run(id: string): Promise<RunDetail>
+  pickFolder(): Promise<string | null | { error: string }>
+  setWorkdir(path: string): Promise<{ error?: string }>
+  setEffort(provider: Provider, effort: string | null): Promise<unknown>
+  setModel(model: string): Promise<void>
+  setMode(mode: string): Promise<void>
+  pin(): Promise<void>
+  companionToggle(): Promise<void>
+  openFolder(): Promise<void>
+  stop(provider: Provider): Promise<void>
+}
+
+export type Pane = 'detail' | 'claude' | 'gemini' | 'codex' | 'settings'
+export type Tab = 'progress' | 'brief' | 'result'
+
+/** One frame's view of the flow, worked out once and drawn by a theme. */
+export type Frame = {
+  now: number
+  steps: Map<string, Step>
+  focusId: string | null
+  focusSince: number
+  gate: Step | null
+  running: Step[]
+  phase: number
+}
+
+export const now = () => Date.now() / 1000
+
+export class Flow {
+  events: FlowEvent[] = []
+  info: FlowInfo | null = null
+  flows: FlowInfo[] = []
+  paused = false
+  settings: Settings | null = null
+  /** The step the owner picked; null follows whatever is live. */
+  pinned: string | null = null
+  hover: string | null = null
+  pane: Pane = 'detail'
+  tab: Tab = 'progress'
+  /** Which answer is highlighted in an open gate's prompt; -1 until the owner moves to one, so a stray Enter answers nothing. */
+  choice = -1
+  /** The review's countdown was held because the owner started a steer; it resumes when they send or clear it. */
+  heldForSteer = false
+  /** The review the highlighted answer belongs to; another review starts with nothing highlighted. */
+  private choiceGate = ''
+  private holdChain: Promise<unknown> = Promise.resolve()
+  /** Folds by how many events have happened: the same count gives the same steps, so frames reuse them. */
+  private folds = new Map<number, { steps: Map<string, Step>; focus: { id: string | null; since: number } }>()
+  private foldsFor: FlowEvent[] = []
+  input = ''
+  notice: { text: string; at: number } | null = null
+  private runs = new Map<string, RunDetail | 'loading'>()
+  private listeners = new Set<() => void>()
+
+  constructor(readonly api: BridgeApi) {}
+
+  async start() {
+    this.api.on('state', payload => { this.settings = payload as Settings; this.changed() })
+    this.api.on('flow', payload => this.takeFlow(payload as FlowPayload))
+    this.settings = await this.api.state()
+    this.takeFlow(await this.api.flow())
+  }
+
+  onChange(listener: () => void) {
+    this.listeners.add(listener)
+    return () => this.listeners.delete(listener)
+  }
+
+  private changed() {
+    for (const listener of this.listeners) listener()
+  }
+
+  private takeFlow(payload: FlowPayload) {
+    const before = this.info?.id
+    this.events = payload.events
+    this.info = payload.flow
+    this.flows = payload.flows
+    this.paused = payload.paused
+    if (before !== this.info?.id) { this.pinned = null; this.choice = -1 }
+    this.changed()
+  }
+
+  /** The steps as they stand at t, reused while no new event has happened. */
+  foldAt(at: number) {
+    if (this.foldsFor !== this.events) { this.folds.clear(); this.foldsFor = this.events }
+    const k = countBy(this.events, at)
+    let hit = this.folds.get(k)
+    if (!hit) {
+      const steps = fold(this.events, at)
+      hit = { steps, focus: focusAt(this.events, steps, at) }
+      if (this.folds.size > 12) this.folds.clear()
+      this.folds.set(k, hit)
+    }
+    return hit
+  }
+
+  frame(at = now()): Frame {
+    const { steps, focus } = this.foldAt(at)
+    const pinned = this.pinned && steps.has(this.pinned) ? this.pinned : null
+    let gate: Step | null = null
+    const running: Step[] = []
+    let phase = -1
+    for (const s of steps.values()) {
+      if (s.state === 'waiting' && s.kind === 'gate') gate = s
+      if (s.state === 'running' && s.kind !== 'gate' && s.kind !== 'steer') running.push(s)
+      if (typeof s.phase === 'number') phase = Math.max(phase, s.phase)
+    }
+    running.sort((a, b) => b.t0 - a.t0 || LANE[b.lane] - LANE[a.lane])
+    const gateKey = gate ? `${gate.id}@${gate.t0}` : ''
+    if (gateKey !== this.choiceGate) {
+      this.choiceGate = gateKey
+      this.choice = -1
+      if (this.heldForSteer) void this.release()
+    }
+    return { now: at, steps, focusId: pinned ?? focus.id, focusSince: pinned ? 0 : focus.since, gate, running, phase }
+  }
+
+  // ---------------------------------------------------------------- picking
+
+  select(id: string | null) {
+    this.pinned = id && id !== this.pinned ? id : null
+    this.pane = 'detail'
+    this.tab = 'progress'
+    this.changed()
+  }
+
+  setPane(pane: Pane) {
+    this.pane = pane
+    this.changed()
+  }
+
+  setTab(tab: Tab) {
+    this.tab = tab
+    this.changed()
+  }
+
+  /** A run's brief and reply, fetched once when a step that is a run is opened. */
+  runDetail(id: string | undefined): RunDetail | null {
+    if (!id) return null
+    const known = this.runs.get(id)
+    if (known === 'loading') return null
+    if (known) return known
+    this.runs.set(id, 'loading')
+    void this.api.run(id).then(detail => { this.runs.set(id, detail); this.changed() }, () => this.runs.delete(id))
+    return null
+  }
+
+  /** Forget a run's cached detail (it finished since). */
+  refreshRun(id: string) {
+    this.runs.delete(id)
+  }
+
+  // ---------------------------------------------------------------- acting
+
+  say(text: string) {
+    this.notice = { text, at: now() }
+    this.changed()
+  }
+
+  async answer(gate: Step, answer: GateAnswer, text?: string) {
+    const result = await this.api.answerGate(gate.id, answer, text, gate.t0)
+    if (result.error) this.say(result.error)
+    else if (result.taken) this.say('already answered')
+    else this.say(answer === 'approve' ? 'approved' : answer === 'decline' ? 'declined' : 'change sent')
+    this.choice = -1
+    if (this.heldForSteer) await this.release()
+  }
+
+  async togglePause() {
+    const pausing = !this.paused
+    const result = await this.api.setPaused(pausing)
+    if (result.error) this.say(result.error)
+    else this.say(pausing ? 'paused: holds at the next step' : 'resumed')
+    this.heldForSteer = false
+  }
+
+  /** The owner started typing a change for a timed review: hold its countdown so it cannot run out mid-sentence. */
+  holdForSteer(gate: Step | null) {
+    if (!gate || gate.noAuto || this.paused || this.heldForSteer) return this.holdChain
+    this.heldForSteer = true
+    // one change at a time, in order: a quick hold-then-release never ends paused
+    this.holdChain = this.holdChain.then(() => this.api.setPaused(true)).catch(() => undefined)
+    return this.holdChain
+  }
+
+  /** The held countdown goes on again (the change was sent, the box cleared, or the review closed). */
+  release() {
+    if (!this.heldForSteer) return this.holdChain
+    this.heldForSteer = false
+    this.holdChain = this.holdChain.then(() => this.api.setPaused(false)).catch(() => undefined)
+    return this.holdChain
+  }
+
+  /** The steer box changed: an emptied box lets a held review go on. */
+  typed(text: string, gate: Step | null) {
+    this.input = text
+    if (text.trim()) void this.holdForSteer(gate)
+    else void this.release()
+  }
+
+  /** The steer box: an open gate takes plain text as its steer; otherwise main routes it. */
+  async send(gate: Step | null) {
+    const text = this.input.trim()
+    if (!text) return
+    this.input = ''
+    this.changed()
+    // A timed review takes plain text as its change; a review that needs a real yes does not (it goes to Claude as a steer).
+    if (gate && !gate.noAuto && !/^@(codex|gemini)\b/i.test(text)) return this.answer(gate, 'steer', text)
+    const result = await this.api.steer(text)
+    if (result.error) { this.input = text; this.say(result.error); return }
+    void this.release()
+    const route = result.route ?? ''
+    this.say(route === 'claude-next-step' ? 'sent: claude reads it at its next step' : route === 'claude-prompt' ? 'sent to claude' : `asked ${route}`)
+  }
+
+  /** Who the steer box sends to, from its first word. */
+  target(): Lane {
+    const at = this.input.match(/^@(codex|gemini)\b/i)
+    return at ? (at[1]!.toLowerCase() as Lane) : 'claude'
+  }
+
+  /** Tab: claude, then @codex, then @gemini, keeping what is typed. */
+  cycleTarget() {
+    const body = this.input.replace(/^@(codex|gemini)\b\s*/i, '')
+    const next = { claude: '@codex ', codex: '@gemini ', gemini: '', you: '' }[this.target()]
+    this.input = next + body
+    this.changed()
+  }
+
+  async setTheme(theme: Theme) {
+    await this.api.setTheme(theme)
+  }
+}
+
+/** The options an open gate offers, and what each answers. */
+export function gateOptions(gate: Step, paused = false): { word: string; answer: GateAnswer | 'pause' | 'focus' }[] {
+  return gate.noAuto
+    ? [{ word: 'yes', answer: 'approve' }, { word: 'not now', answer: 'decline' }]
+    : [{ word: 'approve', answer: 'approve' }, { word: paused ? 'resume' : 'pause', answer: 'pause' }, { word: 'steer', answer: 'focus' }, { word: 'decline', answer: 'decline' }]
+}
+
+/** Seconds left on an open gate, or null when it does not carry on by itself (or is paused). */
+export function gateLeft(gate: Step, at: number): number | null {
+  if (gate.noAuto || typeof gate.until !== 'number' || typeof gate.wait !== 'number') return null
+  return Math.max(0, Math.ceil(gate.until - at))
+}

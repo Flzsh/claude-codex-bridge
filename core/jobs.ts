@@ -13,6 +13,7 @@ export const LOST_AFTER_SECONDS = 3 * 60 * 60
 
 type Status = {
   provider?: string
+  origin?: string
   model?: string
   effort?: string
   title?: string
@@ -41,6 +42,7 @@ export function toJob(id: string, text: string, nowSeconds: number): Job | null 
   return {
     id,
     provider: status.provider === 'gemini' ? 'gemini' : 'codex',
+    origin: status.origin === 'app' ? 'app' : 'claude',
     model: status.model ?? '?',
     effort: status.effort ?? '',
     title: status.title ?? '',
@@ -67,7 +69,7 @@ export function duration(seconds: number): string {
 
 const capital = (word: string) => `${word.charAt(0).toUpperCase()}${word.slice(1)}`
 
-/** The model as a person names it: "gpt-6.1-sol" is "Sol 6.1", "gemini-4-neon" is "Gemini 4 Neon", plain "gemini" (agy's default model) is "Gemini"; others as given. */
+/** The model as a person names it: "gpt-6.2-sol" is "Sol 6.2", "gemini-4-neon" is "Gemini 4 Neon", plain "gemini" (agy's default model) is "Gemini"; others as given. */
 export function modelName(model: string): string {
   const [, version, family] = /^gpt-([\d.]+)-(\w+)$/.exec(model) ?? []
   if (version && family) return `${capital(family)} ${version}`
@@ -82,7 +84,7 @@ export function providerName(provider: Provider): string {
   return provider === 'gemini' ? 'Gemini' : 'Codex'
 }
 
-/** Left of a job's first row: "Sol 6.1 · ultra". */
+/** Left of a job's first row: "Sol 6.2 · high". */
 export function headline(job: Job): string {
   return `${modelName(job.model)}${job.effort ? ` · ${job.effort}` : ''}`
 }
@@ -127,4 +129,42 @@ export function logTail(log: string, lines = 8): string {
 /** Running jobs first, then the rest, each newest first. */
 export function ordered(list: Job[]): Job[] {
   return [...list.filter(job => job.state === 'running'), ...list.filter(job => job.state !== 'running')]
+}
+
+/** Reasoning efforts each tool accepts (`codex debug models`, `agy --help`). */
+export const EFFORTS = {
+  codex: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+  gemini: ['low', 'medium', 'high', 'xhigh', 'max'],
+} as const satisfies Record<Provider, readonly string[]>
+
+/** Effort picked on the card per provider; null means the script's default (env var, else built-in). */
+export type Efforts = Record<Provider, string | null>
+
+export const NO_EFFORTS: Efforts = { codex: null, gemini: null }
+
+/** Where the card saves the picked efforts; pyr.sh and agy.sh read it when a job starts. */
+export function settingsPath(pluginRoot: string): string {
+  return `${pluginRoot.replace(/[\\/]+$/, '')}/settings.json`
+}
+
+/** The saved efforts, keeping only values the tool accepts. */
+export function parseEfforts(text: string): Efforts {
+  let data: Record<string, unknown> = {}
+  try {
+    const parsed: unknown = JSON.parse(text)
+    if (parsed && typeof parsed === 'object') data = parsed as Record<string, unknown>
+  } catch {
+    return { ...NO_EFFORTS }
+  }
+  const pick = (provider: Provider, value: unknown) =>
+    typeof value === 'string' && (EFFORTS[provider] as readonly string[]).includes(value) ? value : null
+  return { codex: pick('codex', data.codexEffort), gemini: pick('gemini', data.geminiEffort) }
+}
+
+/** settings.json as the scripts read it: one line, a field only when an effort is picked. */
+export function effortsText(efforts: Efforts): string {
+  const fields: Record<string, string> = {}
+  if (efforts.codex) fields.codexEffort = efforts.codex
+  if (efforts.gemini) fields.geminiEffort = efforts.gemini
+  return `${JSON.stringify(fields)}\n`
 }
