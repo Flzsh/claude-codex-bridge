@@ -1,4 +1,4 @@
-import type { Job, JobState } from '../types'
+import type { Job, JobState, Provider } from '../types'
 
 /** Where skills/codex-bridge/pyr.sh writes one folder per run: <plugin>/runs. */
 export function runsDir(pluginRoot: string): string {
@@ -12,6 +12,7 @@ export const SHOW_FINISHED_SECONDS = 20 * 60
 export const LOST_AFTER_SECONDS = 3 * 60 * 60
 
 type Status = {
+  provider?: string
   model?: string
   effort?: string
   title?: string
@@ -39,6 +40,7 @@ export function toJob(id: string, text: string, nowSeconds: number): Job | null 
   const isRunning = state === 'running'
   return {
     id,
+    provider: status.provider === 'gemini' ? 'gemini' : 'codex',
     model: status.model ?? '?',
     effort: status.effort ?? '',
     title: status.title ?? '',
@@ -63,10 +65,21 @@ export function duration(seconds: number): string {
   return `${Math.floor(seconds / 3600)}h ${String(Math.floor((seconds % 3600) / 60)).padStart(2, '0')}m`
 }
 
-/** The model as a person names it: "gpt-6.1-sol" is "Sol 6.1"; others as given. */
+const capital = (word: string) => `${word.charAt(0).toUpperCase()}${word.slice(1)}`
+
+/** The model as a person names it: "gpt-6.1-sol" is "Sol 6.1", "gemini-4-neon" is "Gemini 4 Neon", plain "gemini" (agy's default model) is "Gemini"; others as given. */
 export function modelName(model: string): string {
   const [, version, family] = /^gpt-([\d.]+)-(\w+)$/.exec(model) ?? []
-  return version && family ? `${family.charAt(0).toUpperCase()}${family.slice(1)} ${version}` : model
+  if (version && family) return `${capital(family)} ${version}`
+  const [, geminiVersion, tier] = /^gemini-([\d.]+)-(\w+)$/.exec(model) ?? []
+  if (geminiVersion && tier) return `Gemini ${geminiVersion} ${capital(tier)}`
+  if (model === 'gemini') return 'Gemini'
+  return model
+}
+
+/** Who ran a job, as shown on the card: "Codex" or "Gemini". */
+export function providerName(provider: Provider): string {
+  return provider === 'gemini' ? 'Gemini' : 'Codex'
 }
 
 /** Left of a job's first row: "Sol 6.1 · ultra". */

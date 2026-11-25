@@ -1,7 +1,11 @@
 export type JobState = 'running' | 'done' | 'failed' | 'lost'
 
+export type Provider = 'codex' | 'gemini'
+
 export type Job = {
   id: string
+  /** Who ran it: Codex (pyr.sh) or Gemini (agy.sh). Runs from 0.1.0 have no provider and are Codex. */
+  provider: Provider
   model: string
   effort: string
   title: string

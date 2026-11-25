@@ -1,17 +1,34 @@
 # claude-codex-bridge
 
-A Claude Code plugin that lets Claude hand routine work to OpenAI Codex, so your ChatGPT plan does the token-heavy work and your Claude usage goes further, without lowering quality.
+A Claude Code plugin that lets Claude hand routine work to OpenAI Codex, so your ChatGPT plan does the token-heavy work and your Claude usage goes further, without lowering quality. Since 0.2.0 it can also ask Gemini (through Google's Antigravity CLI) for an independent second plan and a review of interaction and copy.
 
 ```
-Claude (plans, routes, checks the result)
-  └─> Codex CLI (GPT model on your ChatGPT plan)
+Claude (plans, routes, checks the result, writes the frontend)
+  ├─> Codex CLI (GPT model on your ChatGPT plan): bounded blocks, diff reviews
+  └─> Gemini via Antigravity CLI (optional): second plan, interaction and copy review
 ```
 
-It has three parts:
+## The workflow
+
+For a feature or a change worth planning, not a one-line fix:
+
+1. You say what you want.
+2. Claude writes a plan; Gemini writes its own without seeing Claude's.
+3. Claude merges them item by item, marking whose idea was adopted and why the other wasn't. You decide.
+4. Claude defines the interfaces and the acceptance checks, hands self-contained backend tasks to Codex, and writes the UI and other design-sensitive code itself.
+5. Gemini reviews the interaction and copy; Codex reviews the diff, at most two rounds.
+6. Claude runs the checks. Nothing is committed, pushed or published without your yes.
+
+Without Antigravity CLI, Claude writes the plan alone (so there is nothing to merge in step 3) and step 5 has only the Codex review.
+
+## What's inside
+
+The plugin has four parts:
 
 - **A skill** that tells Claude what to hand off (edits, tests, code reading, reviews), what to keep (hard problems, design taste, anything that publishes or touches secrets), how to brief Codex, and to check every result before showing it to you.
 - **A job script** (`skills/codex-bridge/pyr.sh`) that runs one Codex job and gives Claude only Codex's final answer, not the long log.
-- **A Codex card** above the message box. Collapsed it is one line (`▸ Codex · idle`, or `1 running`). Click it to see recent tasks; click a task to see the brief Claude sent and Codex's reply. You get a pop-up when a task finishes. `/codex` toggles the card.
+- **A Gemini script** (`skills/codex-bridge/agy.sh`) that runs one Gemini job through Antigravity CLI. Gemini answers in text only: it can read files but cannot edit them or run commands, and the script never bypasses Antigravity's permission checks.
+- **A Codex card** above the message box. Collapsed it is one line (`▸ Codex · idle`, or `1 running`). Click it to see recent Codex and Gemini tasks; click a task to see the brief Claude sent and the reply. You get a pop-up when a task finishes. `/codex` toggles the card.
 
 ## Requirements
 
@@ -25,6 +42,7 @@ It has three parts:
 
   On Windows, if the Codex desktop app is installed, the script uses the Codex CLI bundled with it, which is often newer than an old npm install.
 - `bash`. On Windows that is Git Bash, which Claude Code already uses.
+- Optional, for Gemini: [Antigravity CLI](https://antigravity.google/download), signed in once by running `agy` (a personal Google account; Google AI Pro raises its limits), and `node` on PATH to read its replies. Gemini CLI no longer serves personal accounts.
 
 ## Install
 
@@ -46,7 +64,7 @@ Answer `y` to add the marketplace and pick the user scope. The card appears in s
 
 ## Choosing the model
 
-By default jobs run on `gpt-6.1-sol` at `xhigh` reasoning effort. To use another model your plan has, set these in the `env` block of `~/.claude/settings.json`:
+By default jobs run on `gpt-6.1-sol` at `high` reasoning effort, which suits a ChatGPT Plus quota. To use another model your plan has, set these in the `env` block of `~/.claude/settings.json`:
 
 ```json
 {
@@ -58,6 +76,10 @@ By default jobs run on `gpt-6.1-sol` at `xhigh` reasoning effort. To use another
 ```
 
 `CODEX_BIN` points the script at a specific `codex` executable.
+
+If your `~/.codex/config.toml` sends Codex through a local proxy (`openai_base_url`) that refuses it, a failed job prints a hint. Set `CODEX_BRIDGE_BASE_URL` to `https://chatgpt.com/backend-api/codex` to send this plugin's jobs straight to ChatGPT; your config file is left alone.
+
+For Gemini, set these in the same `env` block if needed: `AGY_BIN` points at a specific `agy` executable; `AGY_MODEL` and `AGY_EFFORT` override Antigravity's defaults by passing `--model` and `--effort`.
 
 ## How a job runs
 

@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { Job, JobDetail } from '../types'
-import { clip, detail, headline, isVisible, logTail, modelName, ordered, runsDir, timing, toJob } from './jobs'
+import { clip, detail, headline, isVisible, logTail, modelName, ordered, providerName, runsDir, timing, toJob } from './jobs'
 
 const jobs = atom({ plugin: 'codex-bridge', key: 'jobs' } as const, [])
 const hiddenIds = atom({ plugin: 'codex-bridge', key: 'hiddenIds' } as const, [])
@@ -90,7 +90,7 @@ async function poll($: EngineInterface) {
       const before = seen.get(job.id)
       if (!isFirstPoll && before === 'running' && job.state !== 'running') {
         const verb = job.state === 'done' ? 'finished' : job.state === 'failed' ? 'failed' : 'was lost'
-        $.ui.toast(`Codex task ${verb}: ${modelName(job.model)}${job.title ? ` - ${job.title}` : ''}`, {
+        $.ui.toast(`${providerName(job.provider)} task ${verb}: ${modelName(job.model)}${job.title ? ` - ${job.title}` : ''}`, {
           timeoutMs: 8000,
         })
       }
@@ -209,11 +209,11 @@ export const register: Register = on => {
               </Text>
               {isJobOpen && (
                 <Box flexDirection="column" marginLeft={4} marginBottom={1}>
-                  <Text dimColor>Sent to Codex</Text>
+                  <Text dimColor>Sent to {providerName(job.provider)}</Text>
                   <Box borderStyle="single" borderDimColor paddingX={1}>
                     <Markdown text={text?.brief || 'Loading…'} />
                   </Box>
-                  <Text dimColor>{job.state === 'running' ? 'Codex is working…' : 'Codex replied'}</Text>
+                  <Text dimColor>{`${providerName(job.provider)} ${job.state === 'running' ? 'is working…' : job.state === 'done' ? 'replied' : job.state === 'failed' ? 'failed' : 'job was lost'}`}</Text>
                   {job.state !== 'running' && (
                     <Box borderStyle="single" borderDimColor paddingX={1}>
                       <Markdown text={text?.reply || 'Loading…'} />

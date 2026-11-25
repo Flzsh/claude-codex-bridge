@@ -1,6 +1,6 @@
 import { describe as group, expect, test } from 'claude-code/testing'
 
-import { clip, detail, duration, headline, isVisible, logTail, modelName, ordered, runsDir, timing, toJob } from './jobs'
+import { clip, detail, duration, headline, isVisible, logTail, modelName, ordered, providerName, runsDir, timing, toJob } from './jobs'
 
 const status = (fields: Record<string, unknown>) =>
   JSON.stringify({
@@ -56,6 +56,21 @@ group('codex jobs', () => {
     expect(duration(3725)).toBe('1h 02m')
     expect(modelName('o3')).toBe('o3')
     expect(modelName('gpt-6-astra')).toBe('Astra 6')
+    expect(modelName('gemini-4-neon')).toBe('Gemini 4 Neon')
+    expect(modelName('gemini')).toBe('Gemini')
+  })
+
+  test('a run from 0.1.0 has no provider and counts as Codex', () => {
+    const job = toJob('f', status({}), 1010)
+    expect(job?.provider).toBe('codex')
+    expect(providerName(job!.provider)).toBe('Codex')
+  })
+
+  test('a Gemini run is named as Gemini', () => {
+    const job = toJob('g', status({ provider: 'gemini', model: 'gemini-4-neon', effort: '', state: 'done', exit: 0, endedAt: 1020 }), 1030)
+    expect(job?.provider).toBe('gemini')
+    expect(providerName(job!.provider)).toBe('Gemini')
+    expect(headline(job!)).toBe('Gemini 4 Neon')
   })
 })
 

@@ -3,7 +3,8 @@
 # Usage: pyr.sh <workdir> <brief-file> [read-only|workspace-write]
 #
 # Model and effort come from CODEX_BRIDGE_MODEL / CODEX_BRIDGE_EFFORT
-# (defaults below); CODEX_BIN picks the codex executable.
+# (default effort: high); CODEX_BIN picks the codex executable.
+# CODEX_BRIDGE_BASE_URL optionally overrides openai_base_url for this job.
 #
 # Each run gets a folder under <plugin>/runs with brief.md, log.txt, result.md
 # and status.json; the plugin's Codex card reads status.json to show the job.
@@ -11,7 +12,7 @@ set -u
 
 WORKDIR="${1:?workdir}"; BRIEF="${2:?brief file}"; SANDBOX="${3:-workspace-write}"
 MODEL="${CODEX_BRIDGE_MODEL:-gpt-6.1-sol}"
-EFFORT="${CODEX_BRIDGE_EFFORT:-xhigh}"
+EFFORT="${CODEX_BRIDGE_EFFORT:-high}"
 
 case "$SANDBOX" in read-only|workspace-write) ;; *) echo "sandbox must be read-only or workspace-write" >&2; exit 2 ;; esac
 [ -f "$BRIEF" ] || { echo "brief file not found: $BRIEF" >&2; exit 2; }
@@ -37,7 +38,7 @@ mkdir -p "$RUN" && cp -- "$BRIEF" "$RUN/brief.md" || { echo "could not set up $R
 TITLE="$(grep -m1 -v '^[[:space:]]*$' "$RUN/brief.md" | tr '\t' ' ' | tr -d '\000-\037"\134' | cut -c1-90)"
 START=$(date +%s)
 write_status() { # state exit
-  printf '{"model":"%s","effort":"%s","title":"%s","workdir":"%s","startedAt":%s,"state":"%s","exit":%s,"endedAt":%s}\n' \
+  printf '{"provider":"codex","model":"%s","effort":"%s","title":"%s","workdir":"%s","startedAt":%s,"state":"%s","exit":%s,"endedAt":%s}\n' \
     "$(printf %s "$MODEL" | tr -d '\000-\037"\134')" "$(printf %s "$EFFORT" | tr -d '\000-\037"\134')" "$TITLE" \
     "$(basename -- "$WORKDIR" | tr -d '\000-\037"\134')" "$START" "$1" "$2" \
     "$([ "$1" = running ] && echo null || date +%s)" > "$RUN/status.json.tmp" && mv -f "$RUN/status.json.tmp" "$RUN/status.json"
@@ -48,9 +49,22 @@ finish() { [ "$DONE" = 1 ] || write_status failed 130; }
 trap finish EXIT
 trap 'exit 130' INT TERM HUP
 
+# Keep the override a single argument containing a TOML string literal.
+BASE_ARGS=()
+if [ -n "${CODEX_BRIDGE_BASE_URL:-}" ]; then
+  BASE_URL="$CODEX_BRIDGE_BASE_URL"
+  BASE_URL="${BASE_URL//\\/\\\\}"
+  BASE_URL="${BASE_URL//\"/\\\"}"
+  BASE_URL="${BASE_URL//$'\n'/\\n}"
+  BASE_URL="${BASE_URL//$'\r'/\\r}"
+  BASE_URL="${BASE_URL//$'\t'/\\t}"
+  BASE_ARGS=(-c "openai_base_url=\"$BASE_URL\"")
+fi
+
 write_status running null
 "$CX" exec --skip-git-repo-check -C "$WORKDIR" -s "$SANDBOX" \
   -m "$MODEL" -c model_reasoning_effort="$EFFORT" \
+  ${BASE_ARGS[@]+"${BASE_ARGS[@]}"} \
   -o "$RUN/result.md" - < "$RUN/brief.md" > "$RUN/log.txt" 2>&1
 CODE=$?
 if [ "$CODE" = 0 ] && [ -s "$RUN/result.md" ]; then write_status done 0; else [ "$CODE" = 0 ] && CODE=1; write_status failed "$CODE"; fi
@@ -62,5 +76,8 @@ if [ -s "$RUN/result.md" ]; then
 else
   echo "NO RESULT. Last log lines:"
   grep -v '^[[:space:]]*$' "$RUN/log.txt" | tail -12 | cut -c1-300
+fi
+if [ "$CODE" != 0 ] && grep -Eiq '426 Upgrade Required|connection refused|ECONNREFUSED|127\.0\.0\.1|localhost:[0-9]+' "$RUN/log.txt"; then
+  echo "Hint: Codex may be routed through a local proxy (openai_base_url in ~/.codex/config.toml). To go straight to ChatGPT for these jobs, set CODEX_BRIDGE_BASE_URL=https://chatgpt.com/backend-api/codex"
 fi
 exit $CODE
