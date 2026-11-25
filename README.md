@@ -11,7 +11,7 @@ flowchart TD
     C1 --> P2[Gemini: write its own plan, blind]
     P1 --> S[Claude: merge plans point by point, noting whose idea won and why]
     P2 --> S
-    S --> A{{You approve the plan}}
+    S --> A{{Plan review or 30-second timeout}}
     A --> D[Claude: design and all on-screen text]
     D --> DR[Gemini: review the design and fact-check content]
     DR --> K[Claude: contract and acceptance criteria]
@@ -22,7 +22,8 @@ flowchart TD
     B2 --> I
     B3 --> I
     I --> Q[Gemini: visual QA on screenshots, 2 rounds]
-    Q --> PR[Claude: open the pull request]
+    Q --> PUBLISH{{You approve push and PR}}
+    PUBLISH --> PR[Claude: open the pull request]
     PR --> R[Codex: review the PR, up to 2 rounds]
     R --> M{{You approve merge and deploy}}
 ```
@@ -37,10 +38,10 @@ A model checking its own work shares its own blind spots. This workflow puts a *
 | Acceptance tests | **Gemini**, from the contract only | Tests check what was promised, not what the code happens to do |
 | Backend code | **Codex** | Well-scoped pieces built in parallel on their own branch |
 | Visual QA | **Gemini**, from screenshots | Strong image understanding catches layout, contrast and missing-state bugs that tests don't |
-| Code review | **Codex** | A strict reviewer that didn't write the code under review |
+| Code review | **Codex** | A fresh read-only session reviews the combined diff |
 | Everything else | **Claude** | Leads, decides, writes the frontend, integrates, and reports honestly |
 
-You stay in control: the workflow **always stops for your approval of the plan**, and asks before merging or deploying unless you turn that off.
+The plan review can continue after 30 seconds on interfaces that let you respond during the countdown. Hold or request changes to stop the countdown. Pushing, merging, and deploying each wait for your explicit yes.
 
 ## What a real run looked like
 
@@ -62,7 +63,7 @@ See [docs/example-run.md](docs/example-run.md) for the step-by-step record.
 | **Antigravity CLI (`agy`)** for Gemini | Sign in with your Google account. Works with Free, Google AI Pro or Ultra; paid plans have higher limits. ⚠️ The old **Gemini CLI** no longer serves Free/Pro/Ultra accounts (since June 2026), so use Antigravity CLI. |
 | **Codex CLI (`codex`)** | Sign in with ChatGPT (a ChatGPT plan that includes Codex) |
 | **GitHub CLI (`gh`)** | For the pull-request steps (`gh auth login`) |
-| git, Python 3, Node.js 22+ | Node is used by the screenshot tool |
+| git 2.31+, Python 3.9+, Node.js 22+ | Node is used by the screenshot tool |
 | A Chromium-based browser | Chrome, Chromium, Edge or Brave, for screenshot QA |
 | macOS or Linux | Developed and tested on macOS. Linux should work. Windows is untested (WSL may work). |
 
@@ -134,12 +135,12 @@ Saying "multi-model workflow" works too. You can also start it directly: type `/
 
 What happens next:
 
-1. **Setup check**, then Claude creates a task folder `.multimodel/tasks/<date>-<name>/` in your project.
-2. **Plans:** Claude and Gemini each write a plan. Claude shows you the merged plan, with a table of which model each decision came from. ⏸ **It waits for your approval.** You can also ask for changes.
+1. **Setup check**, then Claude creates a unique task folder in `.multimodel/tasks/` in your project.
+2. **Plans:** Claude and Gemini each write a plan. Claude shows you the merged plan, with a table of which model each decision came from. A timed plan review continues after 30 seconds unless you intervene. Chat surfaces that deliver replies after the turn use manual plan approval.
 3. **Design:** Claude writes the design, Gemini reviews it, and Claude records each decision.
 4. **Build:** Codex builds the backend on its own branch, Gemini writes acceptance tests, and Claude builds the frontend, all at once.
 5. **Verify:** Claude merges the work, runs every test, takes screenshots, and Gemini checks them (two rounds).
-6. **Ship:** Claude opens a pull request and Codex reviews it (up to two rounds). ⏸ **Claude asks before merging and deploying.**
+6. **Ship:** After you approve the push, Claude opens a pull request and Codex reviews it (up to two rounds). Merge and deploy each require your explicit approval.
 
 A medium feature takes roughly **1–2 hours of wall-clock time**, mostly waiting on the other models. Claude keeps working while they run. Each Gemini call takes 1–6 minutes; a Codex backend ticket about 20 minutes.
 
@@ -153,12 +154,13 @@ The first run creates `.multimodel/config.yaml` in your project:
 | `codex_model`, `codex_review_model` | CLI default | Codex models for building and reviewing |
 | `test_command` | — | e.g. `npm test` |
 | `deploy_command`, `live_url` | — | Leave empty to stop after merge |
-| `auto_merge`, `auto_deploy` | `false` | Set `true` to skip the merge/deploy questions |
 | `max_review_rounds` | `2` | Codex review rounds before open issues go to you |
+
+The current workflow always asks before merging or deploying. Older `auto_merge` and `auto_deploy` settings have no effect.
 
 ### What you get
 
-Everything is saved in the task folder, so you can audit or resume a run:
+The task folder is local by default, including the append-only progress log. Resume with the same folder. Pull requests use a reviewed summary, acceptance criteria, and test results. If a project previously committed task artifacts, those files remain tracked until removed from the index.
 
 - Both plans, the merged plan and its decision table.
 - The design with every review decision.
@@ -169,12 +171,12 @@ Everything is saved in the task folder, so you can audit or resume a run:
 
 ## Safety and privacy
 
-- **Gemini runs read-only** (Antigravity's plan mode). It can read files but never edit them or run commands.
-- **Secrets are hidden from Gemini.** Files like `.env`, keys and credentials are blocked by exact path on every call. Antigravity itself ignores `.geminiignore`, so the script does this. Add more paths to `.geminiignore` to block them too.
+- **Gemini plans and authors acceptance tests with inline inputs.** Those calls run in a temporary workspace with file and tool permissions denied.
+- **Repo-aware Gemini calls** use read-only settings and a best-effort filter for common secret-file names and exact paths from `.geminiignore`.
 - **Codex builds in a separate git worktree** (under `~/.multimodel-worktrees/`), on its own branch. Claude reads the actual diff before merging anything.
 - **Outside output is treated as data.** Text from Gemini or Codex is evaluated, never run as instructions.
-- **Both outside models see your code.** Don't use this on code you aren't allowed to share with Google and OpenAI. Codex can read whatever its sandbox allows, so keep secrets out of tracked files.
-- **Nothing merges or deploys without your OK**, unless you set `auto_merge` / `auto_deploy`.
+- **Repo-aware calls share project context.** Use only code and inputs you can share with the relevant provider. Keep secrets out of source files and tickets.
+- **Push, merge, and deploy gates** require an explicit yes for the revision and destination shown.
 
 ## Limits and known issues
 
