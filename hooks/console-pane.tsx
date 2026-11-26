@@ -47,8 +47,8 @@ let stopRun: (() => void) | null = null
 const GIT_BASH = ['C:/Program Files/Git/bin/bash.exe', 'C:/Program Files (x86)/Git/bin/bash.exe']
 
 /** Git Bash on Windows (plain `bash` there may be WSL's), else bash on PATH. */
-async function findBash($: EngineInterface): Promise<string> {
-  if (!/^[A-Za-z]:/.test(root)) return 'bash'
+export async function findBash($: EngineInterface, pluginRoot = root): Promise<string> {
+  if (!/^[A-Za-z]:/.test(pluginRoot)) return 'bash'
   for (const path of GIT_BASH) if (await $.fs.exists(path)) return path
   return 'bash'
 }

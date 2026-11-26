@@ -141,6 +141,12 @@ html[data-theme='cli'] .titlebar { background: var(--term-bar); }
 .log .now { margin-top: 6px; color: var(--ink-2); font-style: italic; align-items: center; }
 .d-text { white-space: pre-wrap; font-size: 12.8px; line-height: 1.5; color: var(--ink); }
 .d-empty { color: var(--ink-3); font: italic 400 13.5px/1.5 var(--serif); margin-top: 8px; }
+.d-guide { font: 400 13.5px/1.5 var(--serif); color: var(--ink-2); margin-top: 6px; }
+.d-guide b { font-size: 15px; color: var(--ink); }
+.d-guide p { margin: 8px 0 0; }
+.d-guide .conn { font-style: italic; }
+.d-guide .conn.on { color: var(--ink-3); }
+.d-guide .conn.off { color: #a9522f; }
 .d-agent-step { display: flex; gap: 10px; align-items: flex-start; width: 100%; text-align: left; padding: 8px 0 4px; }
 .d-agent-step .tt { display: flex; flex-direction: column; min-width: 0; }
 .d-agent-step .tt b { font: 700 13.5px/1.3 var(--serif); }

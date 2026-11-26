@@ -211,6 +211,8 @@ async function snapshot() {
     models: [...CODEX_MODELS],
     effortChoices: { codex: [...EFFORTS.codex], gemini: [...EFFORTS.gemini] },
     bashError,
+    delivery,
+    claudeHere,
     threads: {
       codex: { continuing: Boolean(threads.codex.session), running: running.get('codex')?.startedAt ?? null },
       gemini: { continuing: Boolean(threads.gemini.session), running: running.get('gemini')?.startedAt ?? null },
@@ -307,13 +309,19 @@ async function sweep() {
     // A file mid-write: the next sweep reads it.
   }
   latestClaude = await readClaudeStatus(config.workdir)
+  await checkDelivery()
+  const here = latestClaude?.here === true
+  if (here !== claudeHere) {
+    claudeHere = here
+    send('state', await snapshot())
+  }
   void updateCompanion()
 }
 
 // ----------------------------------------------------------- Claude's status
 
 /** Claude's own status, written by the plugin (<plugin>/status/<folder>.json): thinking, a tool, or idle. */
-type ClaudeStatus = { state: 'thinking' | 'tool' | 'idle'; detail: string; since: number; t: number }
+type ClaudeStatus = { state: 'thinking' | 'tool' | 'idle'; detail: string; since: number; t: number; here?: boolean }
 let latestClaude: ClaudeStatus | null = null
 
 /** This folder's session if there is one, else the session that changed last; a busy status left for 15 minutes counts as idle. */
@@ -340,7 +348,9 @@ async function readClaudeStatus(workdir: string | null): Promise<ClaudeStatus | 
   }
   if (!best) return null
   const stale = best.state !== 'idle' && Date.now() / 1000 - best.t > 15 * 60
-  return { state: stale ? 'idle' : best.state, detail: typeof best.detail === 'string' ? best.detail.slice(0, 120) : '', since: best.since, t: best.t }
+  // the plugin writes its status again every 30 s while the session is open
+  const here = workdir !== null && same(best.cwd, workdir) && Date.now() / 1000 - best.t < 75
+  return { state: stale ? 'idle' : best.state, detail: typeof best.detail === 'string' ? best.detail.slice(0, 120) : '', since: best.since, t: best.t, here }
 }
 
 // ------------------------------------------------------------------ flow
@@ -393,7 +403,20 @@ function announceGate(title: string, summary: string, noAuto: boolean) {
 }
 
 /** The look: the window's own colours follow it. */
+/** Tells the Claude Code pane which look to draw in: <plugin>/status/look.json. */
+async function writeLook() {
+  try {
+    await mkdir(join(PLUGIN_ROOT, 'status'), { recursive: true })
+    await writeFile(join(PLUGIN_ROOT, 'status', 'look.json'), JSON.stringify({ theme: config.theme }))
+  } catch {
+    // the pane keeps its last look
+  }
+}
+
 function applyTheme() {
+  // the companion's shape follows the look: a square tile, or a pill
+  if (companion) companion.setBounds(companionHome(companionSize().height))
+  if (!SHOT_DIR) void writeLook()
   if (!window) return
   const dark = config.theme === 'cli'
   window.setBackgroundColor(dark ? '#151413' : '#FAF9F5')
@@ -435,13 +458,50 @@ async function steer(raw: string): Promise<{ ok?: boolean; error?: string; route
     return { ok: true, route: who }
   }
   if (flowId && isLive(liveFlow)) {
-    await steerClaude(dir, flowId, body)
+    await track('claude-next-step', await steerClaude(dir, flowId, body))
     await sweep()
     return { ok: true, route: 'claude-next-step' }
   }
-  await writeHandoff(paths, { cwd: dir, mode: 'send', text: body })
-  return { ok: true, route: 'claude-prompt' }
+  // With no workflow running, the box starts one: Claude in this folder gets it as a prompt.
+  const file = await writeHandoff(paths, { cwd: dir, mode: 'send', text: startWords(body) })
+  await track('claude-start', file)
+  return { ok: true, route: 'claude-start' }
 }
+
+/** What Claude is sent when the box starts a workflow. */
+const startWords = (goal: string) =>
+  `Run this as a Bridge workflow: write the live flow with flow.sh (codex-bridge skill) so I can follow each step and answer the reviews in Bridge.\n\n${goal}`
+
+// ------------------------------------------------------- did it arrive?
+
+/**
+ * The last message the box sent Claude, and what became of it: waiting, read
+ * (Claude's session took the hand-off, or its next step read the note), or
+ * nobody (no Claude Code session in the folder took a start within 20 s).
+ */
+type Delivery = { route: 'claude-start' | 'claude-next-step'; file: string; at: number; state: 'waiting' | 'read' | 'nobody' }
+let delivery: Delivery | null = null
+
+/** Starts watching a message; the window hears of it now, so it can say when its state changes. */
+async function track(route: Delivery['route'], file: string) {
+  delivery = { route, file, at: now(), state: 'waiting' }
+  send('state', await snapshot())
+}
+
+/** A hand-off is gone or marked .taken once a session took it; a note is renamed .taken once Claude read it. */
+async function checkDelivery() {
+  const d = delivery
+  if (!d || d.state === 'read') return
+  const gone = !existsSync(d.file) || existsSync(`${d.file}.taken`)
+  const next = gone ? 'read' : d.route === 'claude-start' && now() - d.at > 20 ? 'nobody' : d.state
+  if (next !== d.state && delivery === d) {
+    delivery = { ...d, state: next }
+    send('state', await snapshot())
+  }
+}
+
+/** Whether a Claude Code session with the plugin is open in this folder (its status file keeps fresh). */
+let claudeHere = false
 
 // ------------------------------------------------------------------ runs
 
@@ -668,7 +728,6 @@ function wireIpc() {
     await updateCompanion()
     send('state', await snapshot())
   })
-  handle('companionHover', async (isOver: unknown) => setCompanionOpen(isOver === true), true)
   handle('companionOpen', async () => openMain(), true)
   handle('openFolder', async () => {
     if (config.workdir) await shell.openPath(config.workdir)
@@ -680,29 +739,33 @@ function wireIpc() {
 // whoever started the job, and fades about ten seconds after all is quiet.
 
 let companion: BrowserWindow | null = null
-let companionOpen = false
 let idleSince: number | null = null
 let previewUntil = 0
 let lastCompanion = ''
 
-// A small loop and one line: the pill is 252 x 46; the window adds 8 px round it for the shadow, and grows 30 px upward on hover.
-const COMPANION_W = 268
-const COMPANION_H = 62
-const COMPANION_OPEN_H = 92
+// The companion's window, per look: the terminal look is a square tile (108 px), the drawn look a
+// pill (252 x 46). Each window adds 8 px round it for the shadow, and keeps 30 px above for the
+// row that opens on hover: the window never changes size on hover (that made the bar flash).
 const LINGER_MS = 10_000
+const ROW_ROOM = 30
+function companionSize() {
+  const bar = config.theme === 'cli' ? { width: 124, height: 124 } : { width: 268, height: 62 }
+  return { width: bar.width, height: bar.height + ROW_ROOM }
+}
 
+/** Where the companion sits: where it was left (by its bottom-right corner, so a size change keeps it in its corner), kept on screen. */
 function companionHome(height: number) {
   const area = screen.getPrimaryDisplay().workArea
+  const { width } = companionSize()
   const at = config.companionAt
-  // Kept on screen even if the displays changed since it was left there.
-  const x = at ? Math.min(Math.max(at.x, area.x), area.x + area.width - COMPANION_W) : area.x + area.width - COMPANION_W - 16
-  const bottom = at ? Math.min(Math.max(at.y + COMPANION_H, area.y + COMPANION_H), area.y + area.height) : area.y + area.height - 12
-  return { x, y: bottom - height, width: COMPANION_W, height }
+  const right = at ? Math.min(Math.max(at.x, area.x + width), area.x + area.width) : area.x + area.width - 16
+  const bottom = at ? Math.min(Math.max(at.y, area.y + height), area.y + area.height) : area.y + area.height - 12
+  return { x: right - width, y: bottom - height, width, height }
 }
 
 function createCompanion() {
   companion = new BrowserWindow({
-    ...companionHome(COMPANION_H),
+    ...companionHome(companionSize().height),
     frame: false,
     transparent: true,
     resizable: false,
@@ -724,13 +787,17 @@ function createCompanion() {
     },
   })
   companion.setAlwaysOnTop(true, 'floating')
+  // the room kept above the bar lets clicks through until the pointer is on the bar (watchRow)
+  companion.setIgnoreMouseEvents(true)
+  barHover = false
+  watchRow()
   companion.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
   companion.webContents.on('will-navigate', event => event.preventDefault())
-  // Where it was dragged to: remembered by its bottom edge, so hovering (which grows it upward) never shifts it.
+  // Where it was dragged to: remembered by its bottom-right corner, so hovering (which grows it upward) never shifts it.
   companion.on('moved', () => {
     if (!companion) return
     const bounds = companion.getBounds()
-    config.companionAt = { x: bounds.x, y: bounds.y + bounds.height - COMPANION_H }
+    config.companionAt = { x: bounds.x + bounds.width, y: bounds.y + bounds.height }
     saveConfig()
   })
   companion.on('closed', () => {
@@ -743,13 +810,49 @@ function createCompanion() {
   })
 }
 
-/** Grow upward to list the last events, or settle back to the strip. */
-async function setCompanionOpen(isOpen: boolean) {
-  if (!companion || companionOpen === isOpen) return
-  companionOpen = isOpen
-  const bounds = companion.getBounds()
-  const height = isOpen ? COMPANION_OPEN_H : COMPANION_H
-  companion.setBounds({ x: bounds.x, y: bounds.y + bounds.height - height, width: COMPANION_W, height })
+// The hover row. The main process watches the pointer (about 15 times a second while the bar is up)
+// rather than the page: a window that lets clicks through hears of a "mouse leave" right after each
+// move on Windows, which opened and shut the row at once. On the bar (or on the open row) the
+// window takes clicks; anywhere else, clicks go through to what is underneath.
+let barHover = false
+let rowOpen = false
+let rowCloseAt = 0
+let rowTimer: NodeJS.Timeout | null = null
+const ROW_LINGER_MS = 350
+
+function setRow(open: boolean) {
+  if (rowOpen === open) return
+  rowOpen = open
+  companion?.webContents.send('companion-row', open)
+}
+
+function watchRow() {
+  if (rowTimer) return
+  rowTimer = setInterval(() => {
+    if (!companion || companion.isDestroyed() || !companion.isVisible()) {
+      if (rowOpen) setRow(false)
+      return
+    }
+    const p = screen.getCursorScreenPoint()
+    const b = companion.getBounds()
+    const barW = b.width - 16, barH = b.height - ROW_ROOM - 16
+    const bottom = b.y + b.height - 8
+    const over = p.x >= b.x + 8 && p.x < b.x + 8 + barW && p.y >= bottom - barH - (rowOpen ? ROW_ROOM : 0) && p.y < bottom
+    if (over !== barHover) {
+      barHover = over
+      companion.setIgnoreMouseEvents(!over)
+    }
+    if (over) {
+      rowCloseAt = 0
+      setRow(true)
+    } else if (rowOpen) {
+      if (!rowCloseAt) rowCloseAt = Date.now() + ROW_LINGER_MS
+      else if (Date.now() >= rowCloseAt) {
+        rowCloseAt = 0
+        setRow(false)
+      }
+    }
+  }, 66)
 }
 
 function openMain() {
@@ -795,7 +898,7 @@ async function updateCompanion() {
   if (text === lastCompanion) return
   lastCompanion = text
   if (visible && !companion.isVisible()) {
-    const height = companionOpen ? COMPANION_OPEN_H : COMPANION_H
+    const height = companionSize().height
     companion.setBounds(companionHome(height))
     companion.showInactive()
   }
@@ -809,7 +912,17 @@ async function updateCompanion() {
 
 // ---------------------------------------------------------------- window
 
+/** The folder to open: --workdir64 (base64url, safe for any letters) first, then --workdir. */
 function workdirFromArgs(argv: string[]): string | null {
+  const encoded = argv.indexOf('--workdir64')
+  if (encoded !== -1 && argv[encoded + 1]) {
+    try {
+      const path = Buffer.from(argv[encoded + 1]!, 'base64url').toString('utf8')
+      if (isFolder(path)) return resolve(path)
+    } catch {
+      // fall back to the plain one
+    }
+  }
   const at = argv.indexOf('--workdir')
   const path = at === -1 ? null : (argv[at + 1] ?? null)
   return path && isFolder(path) ? resolve(path) : null
@@ -907,13 +1020,18 @@ async function shoot() {
     await look(theme)
     await snap(`${theme}-flow`)
     report[theme] = await fps()
+    // three moments of the companion's motion, to check the step it shows by animation
     await snapCompanion(`${theme}-companion`)
+    await wait(450)
+    await snapCompanion(`${theme}-companion-b`)
+    await wait(450)
+    await snapCompanion(`${theme}-companion-c`)
     if (companion) {
-      await setCompanionOpen(true)
-      await companion.webContents.executeJavaScript(`document.getElementById('shell').dispatchEvent(new MouseEvent('mouseenter')); true`)
+      // the row as the pointer on the bar opens it, then shut again
+      setRow(true)
       await wait(700)
       await snapCompanion(`${theme}-companion-open`)
-      await companion.webContents.executeJavaScript(`document.getElementById('shell').dispatchEvent(new MouseEvent('mouseleave')); true`)
+      setRow(false)
       await wait(600)
     }
   }
@@ -936,6 +1054,7 @@ if (!app.requestSingleInstanceLock()) {
 
   void app.whenReady().then(async () => {
     await loadConfig()
+    if (!SHOT_DIR) void writeLook()
     const found = findBash({
       env: process.env,
       platform: process.platform,

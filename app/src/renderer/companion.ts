@@ -15,8 +15,7 @@ import { C, mix, spin } from './flow/termkit'
 type Claude = { state: 'thinking' | 'tool' | 'idle'; detail: string; since: number; t: number } | null
 type State = { visible: boolean; busy: boolean; theme: Theme; flow: FlowPayload; runs: { who: string; title: string; since: number }[]; claude: Claude }
 type Companion = {
-  on(event: 'companion', listener: (payload: unknown) => void): () => void
-  companionHover(isOver: boolean): Promise<void>
+  on(event: 'companion' | 'companion-row', listener: (payload: unknown) => void): () => void
   companionOpen(): Promise<void>
   answerGate(gate: string, answer: string, text?: string, t0?: number): Promise<unknown>
   setPaused(paused: boolean): Promise<unknown>
@@ -109,32 +108,44 @@ function actionsFor(s: ReturnType<typeof situation>): [string, 'approve' | 'paus
   return [['Open', 'open']]
 }
 
-// ---------------------------------------------------------------- terminal look: a square loop
+// ---------------------------------------------------------------- terminal look: a square tile
+
+/** The terminal look's companion is a square tile: a square track with a small square per step on it. */
+const TILE = 108
 
 function drawCli(at: number) {
   const dpr = window.devicePixelRatio || 1
-  const h = open ? H + ROW : H
-  if (canvas.width !== Math.round(W * dpr) || canvas.height !== Math.round(h * dpr)) {
-    canvas.width = Math.round(W * dpr)
+  // always as tall as tile + row: a canvas that changes size is cleared, and flashes
+  const h = TILE + ROW
+  if (canvas.width !== Math.round(TILE * dpr) || canvas.height !== Math.round(h * dpr)) {
+    canvas.width = Math.round(TILE * dpr)
     canvas.height = Math.round(h * dpr)
-    canvas.style.width = `${W}px`
+    canvas.style.width = `${TILE}px`
     canvas.style.height = `${h}px`
   }
   const ctx = canvas.getContext('2d')!
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-  ctx.clearRect(0, 0, W, h)
+  ctx.clearRect(0, 0, TILE, h)
   hots = []
   const s = situation(at)
   const line = lineFor(at, s)
   const loop = loopFor(at, s, line)
-  const top = h - H
+  const top = h - TILE
+  const gate = line.tone === 'gate'
 
-  // the window: a dark terminal pill
-  const box = (x: number, y: number, w: number, hh: number) => { ctx.beginPath(); ctx.roundRect(x + 0.5, y + 0.5, w - 1, hh - 1, 6); ctx.fillStyle = C.bg; ctx.fill(); ctx.strokeStyle = line.tone === 'gate' ? mix(C.amber, C.bg, 0.35) : C.rule; ctx.lineWidth = 1; ctx.stroke() }
-  box(0, top, W, H)
+  const box = (x: number, y: number, w: number, hh: number) => {
+    ctx.beginPath()
+    ctx.roundRect(x + 0.5, y + 0.5, w - 1, hh - 1, 6)
+    ctx.fillStyle = C.bg
+    ctx.fill()
+    ctx.strokeStyle = gate ? mix(C.amber, C.bg, 0.35) : C.rule
+    ctx.lineWidth = 1
+    ctx.stroke()
+  }
+  box(0, top, TILE, TILE)
 
-  // the square loop: a square track with one small square per step on it
-  const side = 26, sx = 7, sy = top + (H - side) / 2
+  // the track
+  const side = 84, sx = 12, sy = top + 12
   const per = side * 4
   const pointAt = (d: number): [number, number] => {
     const k = ((d % per) + per) % per
@@ -143,120 +154,148 @@ function drawCli(at: number) {
     if (k < side * 3) return [sx + side - (k - side * 2), sy + side]
     return [sx, sy + side - (k - side * 3)]
   }
+  /** Draws the track from one distance to another, round the corners. */
+  const along = (from: number, to: number, color: string, width: number) => {
+    if (to <= from) return
+    ctx.beginPath()
+    ctx.moveTo(...pointAt(from))
+    for (let c = Math.ceil(from / side) * side; c < to; c += side) ctx.lineTo(...pointAt(c))
+    ctx.lineTo(...pointAt(to))
+    ctx.strokeStyle = color
+    ctx.lineWidth = width
+    ctx.lineJoin = 'miter'
+    ctx.stroke()
+  }
+  along(0, per, C.rule, 1)
   const lane = C[loop.lane]
-  ctx.strokeStyle = C.rule
-  ctx.lineWidth = 1
-  ctx.strokeRect(sx + 0.5, sy + 0.5, side, side)
-  /** A step's square: filled in its agents' colours (split when two shared it). */
-  const node = (x: number, y: number, size: number, lanes: Lane[], dim: boolean) => {
-    const h0 = size / 2
-    const colours = lanes.length ? lanes.map(one => (dim ? mix(C[one], C.bg, 0.35) : C[one])) : [C.dim]
+  const square = (x: number, y: number, size: number, lanes: Lane[], dim: boolean) => {
+    const half = size / 2
+    const colours = lanes.length ? lanes.map(one => (dim ? mix(C[one], C.bg, 0.3) : C[one])) : [C.dim]
     ctx.fillStyle = colours[0]!
-    ctx.fillRect(x - h0, y - h0, size, size)
-    if (colours[1]) { ctx.fillStyle = colours[1]; ctx.fillRect(x, y - h0, h0, size) }
+    ctx.fillRect(Math.round(x - half), Math.round(y - half), size, size)
+    if (colours[1]) { ctx.fillStyle = colours[1]; ctx.fillRect(Math.round(x), Math.round(y - half), Math.ceil(half), size) }
   }
   const nodes = loop.nodes
+  const start = side / 2 // the first step sits at the top's middle; the steps go round clockwise
+  const placeOf = (i: number) => start + (i * per) / Math.max(1, nodes.length)
+
   if (!nodes.length) {
-    // Claude alone: one square going round the track while it works, resting at the top when it is ready
-    const [x, y] = pointAt(side / 2 + (line.tone === 'work' ? (at * 40) % per : 0))
-    node(x, y, 7, [loop.lane], line.tone !== 'work')
-  }
-  nodes.forEach((one, i) => {
-    const [x, y] = pointAt(side / 2 + (i * per) / nodes.length)
-    if (one.state === 'done') node(x, y, 6, one.lanes, true)
-    else if (one.state === 'next') {
-      ctx.fillStyle = C.bg
-      ctx.fillRect(x - 3, y - 3, 6, 6)
-      ctx.lineWidth = 1
-      ctx.strokeStyle = C.faint
-      ctx.strokeRect(x - 2.5, y - 2.5, 5, 5)
-    } else {
-      node(x, y, 8, one.lanes.length ? one.lanes : [loop.lane], false)
-      // the step now: an outline round it, running while the step works, draining at a review
-      const ring = 13, h0 = ring / 2
-      ctx.lineWidth = 1.5
-      if (loop.left !== null) {
-        ctx.strokeStyle = mix(C.amber, C.bg, 0.6)
-        ctx.strokeRect(x - h0, y - h0, ring, ring)
-        ctx.strokeStyle = C.amber
-        ctx.setLineDash([ring * 4 * loop.left, ring * 4])
-        ctx.strokeRect(x - h0, y - h0, ring, ring)
-      } else if (loop.busy) {
-        ctx.strokeStyle = C.bright
-        ctx.setLineDash([5, 3])
-        ctx.lineDashOffset = -at * 18
-        ctx.strokeRect(x - h0, y - h0, ring, ring)
-      }
-      ctx.setLineDash([])
-      ctx.lineDashOffset = 0
+    // no workflow: Claude alone, one square going round while it works, resting at the top when ready
+    const d = start + (line.tone === 'work' ? (at * 46) % per : 0)
+    if (line.tone === 'work') for (let k = 1; k <= 10; k++) along(d - k * 5, d - (k - 1) * 5, mix(lane, C.bg, k / 10), 2)
+    square(...pointAt(d), 9, [loop.lane], line.tone !== 'work')
+  } else {
+    const nowAt = Math.max(0, nodes.findIndex(one => one.state === 'now'))
+    const target = placeOf(nowAt)
+    // the steps so far, lit: a light runs from the first step to the one now, rests there, and starts again
+    const cycle = 2.4, run = 1.3
+    const k = Math.min(1, (at % cycle) / run)
+    const eased = 1 - Math.pow(1 - k, 3)
+    along(start, start + (target - start) * eased, mix(gate ? C.amber : lane, C.bg, 0.35), 2)
+    if (k < 1) {
+      const head = start + (target - start) * eased
+      along(Math.max(start, head - 10), head, gate ? C.amber : C.bright, 2.5)
     }
-  })
-  // inside the square: the seconds left at a review, else the agent's spinner
+    nodes.forEach((one, i) => {
+      const [x, y] = pointAt(placeOf(i))
+      if (one.state === 'done') square(x, y, 8, one.lanes, true)
+      else if (one.state === 'next') {
+        ctx.fillStyle = C.bg
+        ctx.fillRect(x - 4, y - 4, 8, 8)
+        ctx.lineWidth = 1
+        ctx.strokeStyle = C.faint
+        ctx.strokeRect(x - 3.5, y - 3.5, 7, 7)
+      } else {
+        // the step now: bigger, in its agent's colour, with an outline that beats (and drains at a review)
+        square(x, y, 11, one.lanes.length ? one.lanes : [loop.lane], false)
+        const beat = 0.5 + 0.5 * Math.sin(at * Math.PI * 2 / 0.9)
+        const ring = 17, half = ring / 2
+        ctx.lineWidth = 1.5
+        if (loop.left !== null) {
+          ctx.strokeStyle = mix(C.amber, C.bg, 0.65)
+          ctx.strokeRect(Math.round(x - half) + 0.5, Math.round(y - half) + 0.5, ring, ring)
+          ctx.strokeStyle = C.amber
+          ctx.setLineDash([ring * 4 * loop.left, ring * 4])
+          ctx.strokeRect(Math.round(x - half) + 0.5, Math.round(y - half) + 0.5, ring, ring)
+          ctx.setLineDash([])
+        } else {
+          ctx.strokeStyle = mix(C.bright, C.bg, 0.15 + 0.6 * (1 - beat))
+          ctx.strokeRect(Math.round(x - half) + 0.5, Math.round(y - half) + 0.5, ring, ring)
+        }
+      }
+    })
+  }
+
+  // inside the track: who near its top, what in small type below, and which step of how many
+  // near its bottom. With no workflow (Claude on its own) there is no count and no step marks
+  // on the sides, only one small square going round, so the words get that room: wider lines,
+  // and five of them where a workflow has three over its count
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
-  const mid: [number, number] = [sx + side / 2 + 0.5, sy + side / 2 + 1]
-  if (line.tone === 'gate') {
-    ctx.font = `bold 10px ${MONO}`
-    ctx.fillStyle = C.amber
-    ctx.fillText(line.tail === 'your yes' ? '?' : line.tail === 'paused' ? '||' : line.tail.replace('s', ''), ...mid)
-  } else {
-    ctx.font = `bold 11px ${MONO}`
-    ctx.fillStyle = line.tone === 'work' ? lane : C.dim
-    ctx.fillText(line.tone === 'work' ? spin(loop.lane, at) : '·', ...mid)
+  const cx = sx + side / 2
+  const alone = !nodes.length
+  const room = side - (alone ? 12 : 18)
+  const fitText = (text: string) => {
+    let out = text
+    while (out.length > 1 && ctx.measureText(out).width > room) out = out.slice(0, -2) + '…'
+    return out
   }
+  const BOLD = `bold 10.5px ${MONO}`, SMALL = `9px ${MONO}`, FOOT = `bold 9.5px ${MONO}`
+  ctx.font = BOLD
+  ctx.fillStyle = gate ? C.amber : line.tone === 'work' ? lane : C.dim
+  ctx.fillText(fitText(`${line.tone === 'work' ? spin(loop.lane, at) + ' ' : ''}${gate ? 'review' : loop.lane}`), cx, sy + (alone ? 13 : 17))
 
-  // the line: who, then what, then a short tail
-  ctx.textAlign = 'left'
-  ctx.font = `12px ${MONO}`
-  // the loop's colour and spinner already say who: the line is all words for what
-  const x = 46
-  const room = W - 10
-  const y = top + H / 2 + 0.5
-  // at a review the seconds are inside the loop, so the line does not repeat them
-  const tail = (state?.flow.paused && line.tone !== 'gate' ? 'paused ' : '') + (line.tone === 'gate' ? '' : line.tail)
-  ctx.font = `bold 12px ${MONO}`
-  const tailW = tail ? ctx.measureText(tail).width + 8 : 0
-  ctx.font = `12px ${MONO}`
-  let main = line.main
-  while (main.length > 1 && ctx.measureText(main).width > room - x - tailW) main = main.slice(0, -2) + '…'
-  ctx.fillStyle = line.tone === 'gate' ? C.amber : line.tone === 'work' ? mix(C[line.who ?? 'claude'], C.bright, 0.35) : C.dim
-  ctx.fillText(main, x, y)
-  if (tail) {
-    ctx.font = `bold 12px ${MONO}`
-    ctx.fillStyle = line.tone === 'gate' || state?.flow.paused ? C.amber : C.dim
-    ctx.fillText(tail, room - tailW + 8, y)
+  // which step of how many, with the review's seconds or the step's count beside it when they fit
+  const count = s.live && s.phase >= 0 ? `${s.phase + 1}/${s.phases.length}` : ''
+  const extra = state?.flow.paused && !gate ? 'paused' : line.tail.trim()
+  ctx.font = FOOT
+  const both = count && extra ? `${count} ${extra}` : count || extra
+  const foot = ctx.measureText(both).width <= room ? both : gate ? extra : count || extra
+
+  ctx.font = SMALL
+  const what = s.live && s.phase >= 0 ? (s.phases[s.phase] ?? '').toLowerCase() : line.main.toLowerCase()
+  const wrapped: string[] = []
+  for (const word of what.split(/\s+/).filter(Boolean)) {
+    const last = wrapped[wrapped.length - 1]
+    if (last !== undefined && ctx.measureText(`${last} ${word}`).width <= room) wrapped[wrapped.length - 1] = `${last} ${word}`
+    else wrapped.push(word)
   }
-  hots.push({ x: 0, y: top, w: W, h: H, run: () => act('open', s.gate) })
+  // three lines over the step count, four with no count, five with Claude on its own. More
+  // words join the last line, which ends in … where it runs out
+  const most = foot ? 3 : alone ? 5 : 4
+  const shown = wrapped.slice(0, most)
+  if (wrapped.length > most) shown[most - 1] = `${shown[most - 1]} ${wrapped.slice(most).join(' ')}`
+  const LEAD = alone ? 10 : 11
+  const middle = foot ? sy + 42 : sy + 45
+  ctx.fillStyle = C.fg
+  shown.forEach((text, i) => ctx.fillText(fitText(text), cx, middle + (i - (shown.length - 1) / 2) * LEAD + 0.5))
+
+  ctx.font = FOOT
+  if (foot) {
+    ctx.fillStyle = gate || state?.flow.paused ? C.amber : C.dim
+    ctx.fillText(fitText(foot), cx, sy + side - 17)
+  }
+  hots.push({ x: 0, y: top, w: TILE, h: TILE, run: () => act('open', s.gate) })
 
   if (open) {
-    box(0, 0, W, ROW - 4)
-    ctx.font = `12px ${MONO}`
+    box(0, 0, TILE, ROW - 4)
     ctx.textBaseline = 'middle'
+    ctx.textAlign = 'left'
+    ctx.font = `bold 11px ${MONO}`
+    const words2: [string, 'approve' | 'pause' | 'open' | 'decline'][] = s.gate
+      ? (s.gate.noAuto ? [['yes', 'approve'], ['no', 'decline'], ['open', 'open']] : [['ok', 'approve'], [state?.flow.paused ? '▶' : '||', 'pause'], ['open', 'open']])
+      : s.live ? [[state?.flow.paused ? '▶' : '||', 'pause'], ['open', 'open']] : [['open', 'open']]
+    const widths = words2.map(([word]) => ctx.measureText(`[${word}]`).width)
+    const total = widths.reduce((a, b) => a + b, 0) + (words2.length - 1) * 5
+    let bx = (TILE - total) / 2
     const ry = (ROW - 4) / 2 + 0.5
-    let bx = W - 8
-    const actions = actionsFor(s)
-    ctx.font = `bold 12px ${MONO}`
-    const buttonsW = actions.reduce((sum, [word]) => sum + ctx.measureText(`[${word.toLowerCase()}]`).width + 8, 0)
-    ctx.font = `12px ${MONO}`
-    // the step's name, as long as it fits beside the buttons
-    const label = s.live && s.phase >= 0
-      ? `${s.phase + 1}/${s.phases.length} ${(s.phases[s.phase] ?? '').toLowerCase()}`
-      : state?.claude && state.claude.state !== 'idle' ? `working ${Math.floor((now() - state.claude.since) / 60)}:${String(Math.floor(now() - state.claude.since) % 60).padStart(2, '0')}` : ''
-    const short = s.live && s.phase >= 0 ? `${s.phase + 1}/${s.phases.length}` : label
-    const fits = (text: string) => 10 + ctx.measureText(text).width + 10 <= W - 8 - buttonsW
-    const shown = fits(label) ? label : fits(short) ? short : ''
-    if (shown) { ctx.fillStyle = C.dim; ctx.fillText(shown, 10, ry) }
-    for (const [word, kind] of actions.reverse()) {
-      const text = `[${word.toLowerCase()}]`
-      ctx.font = `bold 12px ${MONO}`
-      const w = ctx.measureText(text).width
-      bx -= w
+    words2.forEach(([word, kind], i) => {
       ctx.fillStyle = kind === 'approve' ? C.amber : C.dim
-      ctx.fillText(text, bx, ry)
-      const gate = s.gate
-      hots.unshift({ x: bx - 2, y: 0, w: w + 4, h: ROW - 4, run: () => act(kind, gate) })
-      bx -= 8
-    }
+      ctx.fillText(`[${word}]`, bx, ry)
+      const gateNow = s.gate
+      hots.unshift({ x: bx - 2, y: 0, w: widths[i]! + 4, h: ROW - 4, run: () => act(kind, gateNow) })
+      bx += widths[i]! + 5
+    })
   }
 }
 
@@ -308,6 +347,17 @@ function ringSvg(at: number, loop: ReturnType<typeof loopFor>, line: Line): stri
     const a = top + (line.tone === 'work' ? ((at * 0.45) % 1) * Math.PI * 2 : 0)
     out += disc(c + Math.cos(a) * R, c + Math.sin(a) * R, nr + 0.4, [loop.lane], 'solo')
   }
+  if (nodes.length) {
+    // which step it is, by motion: a stroke runs round from the first step to the one now, rests, and runs again
+    const nowAt = Math.max(0, nodes.findIndex(one => one.state === 'now'))
+    if (nowAt > 0) {
+      const span = (nowAt * Math.PI * 2) / nodes.length
+      const k = Math.min(1, (at % 2.4) / 1.3)
+      const eased = 1 - Math.pow(1 - k, 3)
+      const colour = loop.left !== null ? CLAY_UI : DEEP[loop.lane]
+      out += `<path d="${arc(c, c, R, top, top + span, 'sweep-' + nowAt)}" pathLength="1" fill="none" stroke="${colour}" stroke-opacity=".75" stroke-width="2.2" stroke-linecap="round" stroke-dasharray="${eased.toFixed(3)} 1"/>`
+    }
+  }
   nodes.forEach((one, i) => {
     const a = top + (i * Math.PI * 2) / nodes.length
     const x = c + Math.cos(a) * R, y = c + Math.sin(a) * R
@@ -345,8 +395,9 @@ function drawDrawn(at: number) {
   const s = situation(at)
   const line = lineFor(at, s)
   const loop = loopFor(at, s, line)
-  const h = open ? H + ROW : H
-  const top = h - H
+  // always room for the row above the pill, so opening it moves nothing
+  const h = H + ROW
+  const top = ROW
   const gate = line.tone === 'gate'
   let html = `<div class="pill" data-act="open" data-pos="top:${top}px;width:${W}px;height:${H}px">${pillSvg(W, H, 'cmp-pill' + (gate ? 'g' : 's'), gate)}`
   html += `<span class="ring">${ringSvg(at, loop, line)}</span>`
@@ -397,18 +448,10 @@ function loop() {
 }
 requestAnimationFrame(loop)
 
-// Hover: the window grows upward first, then the small row opens in the new room.
-let leaveTimer: number | undefined
-shell.addEventListener('mouseenter', () => {
-  window.clearTimeout(leaveTimer)
-  if (open) return
-  void bridge.companionHover(true).then(() => { open = true })
-})
-shell.addEventListener('mouseleave', () => {
-  leaveTimer = window.setTimeout(() => {
-    open = false
-    void bridge.companionHover(false)
-  }, 350)
+// Hover: the main process watches the pointer and says when the row opens or shuts. The window
+// always has room for the row, so opening it resizes nothing (a resize made the bar flash).
+bridge.on('companion-row', payload => {
+  open = payload === true
 })
 
 // The bar redraws every frame, so a press acts at once (a click could fall between two drawings).

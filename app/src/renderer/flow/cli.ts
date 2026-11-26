@@ -11,6 +11,9 @@ import { gateLeft, gateOptions, type Flow, type Frame, type Pane } from './contr
 import { JOIN, Term } from './term'
 import { C, clock, EIGHTHS, elapsed, fit, LINE, mix, shimmer, spin, took } from './termkit'
 
+/** Seconds a notice under the box stays. */
+const NOTICE_S = 6
+
 type Hot = { x: number; y: number; w: number; run: () => void; step?: string }
 type Graph = ReturnType<typeof layout>
 type FlowLine = Graph['lines'][number]
@@ -216,7 +219,27 @@ export class CliView {
       this.hots.push({ x: textX, y: 4, w: x - textX, run: () => void flow.api.pickFolder() })
       return
     }
-    if (!flow.info) { term.put(textX, 4, 'no workflow yet', C.faint); return }
+    if (!flow.info) {
+      // how it starts, and whether Claude Code is there to start it
+      const room = Math.max(20, right - textX - 1)
+      /** Words laid into lines of the room's width, from row y; the next free row back. */
+      const para = (text: string, y: number, color: string, x = textX, width = room) => {
+        let line = ''
+        for (const word of text.split(' ')) {
+          if (line && line.length + 1 + word.length > width) { term.put(x, y++, line, color); line = word }
+          else line = line ? `${line} ${word}` : word
+        }
+        if (line) term.put(x, y++, line, color)
+        return y
+      }
+      term.put(textX, 4, 'no workflow yet', C.fg, { b: true })
+      let y = para('type what it should do in the box below and press enter. claude sizes it and plans it, gemini and codex join, and each step shows here. it stops at a review for you.', 6, C.dim)
+      y = para('during a workflow the box steers claude: it reads your note at its next step. @codex or @gemini asks one directly.', y + 1, C.faint)
+      const here = flow.settings?.claudeHere === true
+      term.put(textX, y + 1, here ? '●' : '○', here ? C.green : C.amber)
+      para(here ? 'claude code is open in this folder' : 'no claude code session in this folder yet: open one here first', y + 1, here ? C.dim : C.amber, textX + 2, room - 2)
+      return
+    }
 
     // the graph is worked out again only when the steps changed
     if (this.graphFor !== frame.steps) { this.graph = layout(frame.steps); this.graphFor = frame.steps }
@@ -694,7 +717,8 @@ export class CliView {
       term.put(cols - 4 - route.length, by + 1, route, review ? C.amber : C[target], { b: true })
     } else {
       if (cursorOn) term.put(4, by + 1, ' ', C.bright, { bg: C.fg })
-      const hint = gate?.noAuto ? 'choose yes or not now above' : gate ? 'type a change to this review, or choose above with ←→' : 'steer the work, or @gemini @codex to ask one directly'
+      const starts = !flow.info || flow.info.state === 'done'
+      const hint = gate?.noAuto ? 'choose yes or not now above' : gate ? 'type a change to this review, or choose above with ←→' : starts ? 'what should the workflow do? enter starts it' : 'steer the work, or @gemini @codex to ask one directly'
       term.put(6, by + 1, fit(hint, cols - 22), C.faint)
       const route = gate && !gate.noAuto ? '→ review' : '→ claude'
       term.put(cols - 4 - route.length, by + 1, route, mix(gate && !gate.noAuto ? C.amber : C.claude, C.bg, 0.35))
@@ -705,7 +729,7 @@ export class CliView {
       hx = term.put(hx, rows - 2, key, C.dim)
       hx = term.put(hx + 1, rows - 2, word, C.faint) + 3
     }
-    if (flow.notice && t - flow.notice.at < 3) term.put(cols - 2 - flow.notice.text.length, rows - 2, flow.notice.text, C.amber)
+    if (flow.notice && t - flow.notice.at < NOTICE_S) term.put(cols - 2 - flow.notice.text.length, rows - 2, flow.notice.text, C.amber)
   }
 
   private drawStatus(frame: Frame, rows: number) {

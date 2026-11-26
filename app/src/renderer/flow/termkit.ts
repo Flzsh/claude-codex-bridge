@@ -1,39 +1,14 @@
 // The CLI theme's palette and helpers, shared by the flow and the companion.
 
 import type { Lane } from '../../../../core/flow'
+import { C, mix, SPIN } from '../../../../core/paint'
 
-export const C = {
-  bg: '#151413', sel: '#221f1c', hover: '#1c1a18', bar: '#1f1d1a',
-  fg: '#d4cec2', bright: '#f3eee4', dim: '#8b857a', faint: '#56524b', rule: '#3a3732',
-  you: '#7ea6d8', claude: '#d9825b', gemini: '#a98ddc', codex: '#84bf7d',
-  amber: '#e3b15a', red: '#df6b5e', green: '#84bf7d',
-} as const
+// The palette lives in core/paint, shared with the Claude Code sidebar.
+export { C, mix, SPIN }
 
-/** Each agent's spinner, after its own command line tool. */
-export const SPIN: Record<Lane, { frames: string[]; step: number }> = {
-  claude: { frames: ['·', '✢', '✳', '✶', '✻', '✽', '✻', '✶', '✳', '✢'], step: 0.11 },
-  gemini: { frames: ['⣾', '⣽', '⣻', '⢿', '⡿', '⣟', '⣯', '⣷'], step: 0.08 },
-  codex: { frames: ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'], step: 0.08 },
-  you: { frames: ['◉'], step: 1 },
-}
 export const spin = (lane: Lane, t: number): string => {
   const one = SPIN[lane]
   return one.frames[Math.floor(t / one.step) % one.frames.length] ?? '·'
-}
-
-const hex = (c: string) => [1, 3, 5].map(i => parseInt(c.slice(i, i + 2), 16))
-const mixCache = new Map<string, string>()
-/** a toward b by k (in twelfths, so a frame reuses its colours). */
-export function mix(a: string, b: string, k: number): string {
-  const q = Math.max(0, Math.min(1, Math.round(k * 12) / 12))
-  const key = a + b + q
-  let out = mixCache.get(key)
-  if (!out) {
-    const x = hex(a), y = hex(b)
-    out = '#' + x.map((v, i) => Math.round(v + ((y[i] ?? 0) - v) * q).toString(16).padStart(2, '0')).join('')
-    mixCache.set(key, out)
-  }
-  return out
 }
 
 /** A highlight that sweeps across running text, like Claude Code's thinking line. */

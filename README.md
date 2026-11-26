@@ -1,6 +1,6 @@
 # claude-codex-bridge
 
-A Claude Code plugin that lets Claude hand routine work to OpenAI Codex, so your ChatGPT plan does the token-heavy work and your Claude usage goes further, without lowering quality. It can also ask Gemini (through Google's Antigravity CLI) for an independent second plan and a review of interaction and copy. Since 0.3.0 the three share a project folder, so what one learns the others see, and a desktop app, **Bridge**, is the command center: you watch the workflow happen live, lane by lane, review a plan when it is ready (it carries on by itself after 30 seconds), and steer, pause or decline at any point.
+A Claude Code plugin that lets Claude hand routine work to OpenAI Codex, so your ChatGPT plan does the token-heavy work and your Claude usage goes further, without lowering quality. It can also ask Gemini (through Google's Antigravity CLI) for an independent second plan and a review of interaction and copy. Since 0.3.0 the three share a project folder, so what one learns the others see, and a desktop app, **Bridge**, is the command center: you watch the workflow happen live, lane by lane, review a plan when it is ready (it carries on by itself after 30 seconds), and steer, pause or decline at any point. Since 0.4.0 the same workflow shows in the Bridge pane beside the chat in Claude Code, drawn in the app's look.
 
 ```
 Claude (plans, routes, checks the result, writes the frontend)
@@ -31,7 +31,7 @@ The plugin has five parts:
 - **A skill** that tells Claude what to hand off (edits, tests, code reading, reviews), what to keep (hard problems, design taste, anything that publishes or touches secrets), how to brief Codex, and to check every result before showing it to you.
 - **A job script** (`skills/codex-bridge/pyr.sh`) that runs one Codex job and gives Claude only Codex's final answer, not the long log.
 - **A Gemini script** (`skills/codex-bridge/agy.sh`) that runs one Gemini job through Antigravity CLI. Gemini answers in text only: it can read files but cannot edit them or run commands, and the script never bypasses Antigravity's permission checks.
-- **A band** above the message box: one line (`▸ ◆ Bridge · Build · idle   Open app  Console`) with the shared project's stage and what is running. Click its name to list recent Codex and Gemini tasks and open one to see its brief and reply; you get a pop-up when a task finishes. `/codex` toggles the list.
+- **The Bridge pane** beside the chat (`/codex` opens it), drawn in the app's look, terminal or hand-drawn. It shows the whole workflow on top, every step in its lane, and the step in focus below (what it is doing, or the review's points and countdown). Approve, pause or decline a review there; anything you want to say (a workflow to start, a note to steer, a change to a review) goes in the chat beside it. With no workflow it shows how one goes, the last workflow and the recent Codex and Gemini runs; click a run for its brief and reply. It is laid out for the pane's width, wide or narrow.
 - **The Bridge app** (below), with the console as a fallback inside Claude Code for terminal and SSH use.
 
 ## The Bridge app
@@ -47,7 +47,7 @@ The command center for the three agents. You start in Claude as always; when Cla
 
 Claude writes the flow with `skills/codex-bridge/flow.sh` (the skill says when); Codex and Gemini runs join it by themselves. Everything is in `.bridge/flow.jsonl` in your project, one line per event, plus `.bridge/control/` for your answers.
 
-Open it with **Open app** on the band or `/bridge`. Set it up once (it needs Node.js):
+Open it with **Open app** on the pane or `/bridge`. Set it up once (it needs Node.js):
 
 ```bash
 cd <plugin folder>/app
@@ -58,7 +58,7 @@ npm ci
 
 ## The console
 
-`/bridge console` (or **Console** on the band) opens a pane beside the chat that works like a small terminal for Codex and Gemini, for when the app can't open (a terminal or SSH session). Its top row picks who answers, the Codex model, the effort and whether Codex may edit files. Type a prompt and press Enter; a follow-up continues the same conversation until `/new`.
+`/bridge console` (or **Console** on the Bridge pane) opens a pane beside the chat that works like a small terminal for Codex and Gemini, for when the app can't open (a terminal or SSH session). Its top row picks who answers, the Codex model, the effort and whether Codex may edit files. Type a prompt and press Enter; a follow-up continues the same conversation until `/new`.
 
 | Command | Does |
 |---|---|

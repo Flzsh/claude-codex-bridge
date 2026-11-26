@@ -125,13 +125,14 @@ export function isLive(payload: FlowPayload, now = Date.now() / 1000): boolean {
   return Boolean(last && now - last.t < 10 * 60)
 }
 
-/** A steer for Claude mid-workflow: left for its next flow.sh call, and drawn in the flow now. */
-export async function steerClaude(workdir: string, flow: string | null, text: string) {
+/** A steer for Claude mid-workflow: left for its next flow.sh call, and drawn in the flow now. Returns the note's file. */
+export async function steerClaude(workdir: string, flow: string | null, text: string): Promise<string> {
   await mkdir(controlDir(workdir), { recursive: true })
   await refuseLinks(bridgeDir(workdir), controlDir(workdir))
   const name = `steer-${Date.now()}-${randomBytes(4).toString('hex')}.json`
   await writeFile(join(controlDir(workdir), name), JSON.stringify({ text, by: 'you', t: Date.now() / 1000 }), { flag: 'wx' })
   await steerStep(workdir, flow, 'claude', text)
+  return join(controlDir(workdir), name)
 }
 
 /** The you-lane note that shows a steer, pointing at whoever it went to. */

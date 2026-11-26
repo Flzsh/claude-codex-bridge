@@ -28,6 +28,10 @@ export type Settings = {
   companion: 'auto' | 'off'
   theme: Theme
   bashError: string
+  /** What became of the last message the box sent Claude. */
+  delivery: { route: 'claude-start' | 'claude-next-step'; at: number; state: 'waiting' | 'read' | 'nobody' } | null
+  /** A Claude Code session with the plugin is open in this folder. */
+  claudeHere: boolean
 }
 export type RunDetail = { brief: string; reply: string; logTail: string }
 
@@ -69,6 +73,14 @@ export type Frame = {
 
 export const now = () => Date.now() / 1000
 
+/** What became of a message to Claude, in a few words. */
+export function deliveryWords(d: NonNullable<Settings['delivery']>): string {
+  if (d.route === 'claude-next-step') return d.state === 'read' ? '✓ claude read your note' : 'sent: claude reads it at its next step'
+  if (d.state === 'read') return '✓ claude got it and starts the workflow'
+  if (d.state === 'nobody') return 'no claude code session took it: open claude code in this folder'
+  return 'sent: waiting for claude code in this folder'
+}
+
 export class Flow {
   events: FlowEvent[] = []
   info: FlowInfo | null = null
@@ -98,7 +110,14 @@ export class Flow {
   constructor(readonly api: BridgeApi) {}
 
   async start() {
-    this.api.on('state', payload => { this.settings = payload as Settings; this.changed() })
+    this.api.on('state', payload => {
+      const before = this.settings?.delivery
+      this.settings = payload as Settings
+      const d = this.settings.delivery
+      // a message's fate, said once when it changes
+      if (d && before && d.at === before.at && d.state !== before.state) this.say(deliveryWords(d))
+      this.changed()
+    })
     this.api.on('flow', payload => this.takeFlow(payload as FlowPayload))
     this.settings = await this.api.state()
     this.takeFlow(await this.api.flow())
@@ -253,7 +272,13 @@ export class Flow {
     if (result.error) { this.input = text; this.say(result.error); return }
     void this.release()
     const route = result.route ?? ''
-    this.say(route === 'claude-next-step' ? 'sent: claude reads it at its next step' : route === 'claude-prompt' ? 'sent to claude' : `asked ${route}`)
+    this.say(
+      route === 'claude-next-step'
+        ? 'sent: claude reads it at its next step'
+        : route === 'claude-start'
+          ? this.settings?.claudeHere ? 'sent: claude starts the workflow' : 'sent: waiting for claude code in this folder'
+          : `asked ${route}`,
+    )
   }
 
   /** Who the steer box sends to, from its first word. */

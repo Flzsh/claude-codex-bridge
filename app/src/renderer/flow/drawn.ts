@@ -12,6 +12,9 @@ import {
   meterSvg, NAME, NS, place, seedFrom, setFrame, setWorking, sizeFrame, tickSvg, took, wipe, INK, type Fill, type Frame as InkFrame,
 } from './ink'
 
+/** Seconds a notice under the box stays. */
+const NOTICE_S = 6
+
 const GAP_Y = 44
 const LIVE_H = 46
 const EDGE_TIME = 0.5
@@ -675,11 +678,12 @@ export class DrawnView {
     }
     if (this.toFrame) setFrame(this.toFrame, 2)
     if (this.input.value !== flow.input) this.input.value = flow.input
-    const placeholder = frame.gate?.noAuto ? 'Choose Yes or Not now above' : frame.gate ? 'Type a change to this review…' : 'Steer the work, or @Gemini, @Codex to ask one directly…'
+    const starts = !flow.info || flow.info.state === 'done'
+    const placeholder = frame.gate?.noAuto ? 'Choose Yes or Not now above' : frame.gate ? 'Type a change to this review…' : starts ? 'What should the workflow do? Enter starts it…' : 'Steer the work, or @Gemini, @Codex to ask one directly…'
     if (this.input.placeholder !== placeholder) this.input.placeholder = placeholder
-    const notice = flow.notice && t - flow.notice.at < 3 ? cap(flow.notice.text) : ''
+    const notice = flow.notice && t - flow.notice.at < NOTICE_S ? cap(flow.notice.text) : ''
     if (this.notice.textContent !== notice) this.notice.textContent = notice
-    this.notice.style.opacity = notice ? String(clamp(3 - (t - (flow.notice?.at ?? t)))) : '0'
+    this.notice.style.opacity = notice ? String(clamp(NOTICE_S - (t - (flow.notice?.at ?? t)))) : '0'
     const press = clamp(1 - (t - this.sentAt) / 0.18)
     this.sendEl.style.transform = `translate(${(press * 2.5).toFixed(2)}px, ${(press * 3).toFixed(2)}px)`
     if (this.sendFrame) { setFrame(this.sendFrame, 2); this.sendFrame.shadow.setAttribute('opacity', (1 - press).toFixed(2)) }
@@ -700,6 +704,15 @@ export class DrawnView {
     if (flow.pane === 'settings') return this.drawSettings()
     if (flow.pane !== 'detail') return this.drawAgent(frame, flow.pane)
     const s = frame.focusId ? frame.steps.get(frame.focusId) : undefined
+    if (!s && !flow.info) {
+      // how it starts, and whether Claude Code is there to start it
+      const here = flow.settings?.claudeHere === true
+      this.html(`guide-${here}`, `<div class="d-guide"><b>No workflow yet.</b>`
+        + `<p>Type what it should do in the box below and press Enter. Claude sizes it and plans it, Gemini and Codex join, and each step appears on the board. It stops at a review for you.</p>`
+        + `<p>During a workflow the box steers Claude: it reads your note at its next step. @Codex or @Gemini asks one of them directly.</p>`
+        + `<p class="conn ${here ? 'on' : 'off'}">${here ? 'Claude Code is open in this folder.' : 'No Claude Code session in this folder yet: open one here first.'}</p></div>`)
+      return
+    }
     if (!s) { this.html('empty', '<div class="d-empty">Each step opens here.</div>'); return }
     const logs = s.logs.filter(e => e.t <= t)
     const run = flow.tab === 'progress' ? null : flow.runDetail(s.run)

@@ -153,6 +153,16 @@ flow answer resume --gate paused --text 'continue review'
 await_background GATE=auto
 finish_background GATE=auto
 
+# Approving a review that was paused while it waited is the go-ahead: the pause ends with it.
+start_background gate held 'review the build' --no-auto --max 5
+await_event held waiting
+flow answer pause
+await_event held waiting true
+flow answer approve --gate held
+await_background GATE=approve
+finish_background GATE=approve
+[[ ! -e "$control/pause.json" ]] || fail 'approving a paused review left the pause on'
+
 start_background gate steer 'review' --no-auto --max 5
 await_event steer waiting
 flow answer steer --gate steer --text "$special"
@@ -272,11 +282,12 @@ in_node '
   assert.equal(autoAnswers[0].id, undefined);
   assert.equal(autoAnswers[0].answer, "approve");
   assert.equal(autoAnswers[0].auto, true);
-  for (const id of ["auto", "manual", "race", "decline", "paused", "sliced", "explicit"]) {
+  for (const id of ["auto", "manual", "race", "decline", "paused", "held", "sliced", "explicit"]) {
     assert.equal(gateEvents(id).filter(e => e.state === "done" || e.state === "failed").length, 1, id);
   }
   assert.equal(find("manual", "done").summary, "approved by you");
   assert.equal(find("manual", "done").title, "approved the plan");
+  assert.equal(find("held", "done").title, "approved the build");
   assert.equal(events.find(e => e.answer === "approve" && e.gate === "manual").text, text);
   assert.equal(find("race", "done").auto ?? false, false);
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, "control/gate-race.json"), "utf8")), { answer: "approve" });
@@ -302,6 +313,7 @@ in_node '
 
   assert.deepEqual(events.filter(e => e.answer === "pause" || e.answer === "resume").map(e => [e.id, e.answer, e.gate, e.text]),
     [[undefined, "pause", "paused", text], [undefined, "resume", "paused", "continue review"],
+      [undefined, "pause", undefined, undefined], [undefined, "resume", undefined, undefined],
       [undefined, "pause", undefined, undefined], [undefined, "resume", undefined, undefined]]);
   assert.equal(events.find(e => e.kind === "steer" && e.to === "codex").summary, text);
   assert(events.filter(e => e.kind === "steer").every(e => e.state === "done" && e.lane === "you"));

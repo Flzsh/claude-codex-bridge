@@ -10,6 +10,11 @@ let root = ''
 let cwd = ''
 let since = 0
 let made = false
+let last: { state: ClaudeState; detail: string } = { state: 'idle', detail: '' }
+let wroteAt = 0
+
+/** What Claude is doing now, as this session last wrote it. */
+export const currentStatus = () => ({ ...last, since })
 
 export function statusInit(pluginRoot: string, folder: string) {
   root = pluginRoot.replace(/[\\/]+$/, '')
@@ -39,10 +44,12 @@ export function describeTool(tool: string, input: Record<string, unknown>): stri
   return `using ${tool}`
 }
 
-export async function writeStatus($: EngineInterface, state: ClaudeState, detail = '') {
+export async function writeStatus($: EngineInterface, state: ClaudeState, detail = '', isHeartbeat = false) {
   if (!root || !cwd) return
   const t = Date.now() / 1000
-  if (state === 'thinking' || state === 'idle' || since === 0) since = t
+  if (!isHeartbeat && (state === 'thinking' || state === 'idle' || since === 0)) since = t
+  last = { state, detail }
+  wroteAt = t
   try {
     if (!made) {
       // The plugin's own file calls can't make a folder, so Node does it once.
@@ -53,4 +60,13 @@ export async function writeStatus($: EngineInterface, state: ClaudeState, detail
   } catch {
     // A status is a nicety: a failed write never gets in Claude's way.
   }
+}
+
+/**
+ * Writes the same status again now and then, so the app can tell this session is
+ * still here (its time stays fresh) even while Claude waits for the person.
+ */
+export async function heartbeat($: EngineInterface, everySeconds = 30) {
+  if (Date.now() / 1000 - wroteAt < everySeconds) return
+  await writeStatus($, last.state, last.detail, true)
 }

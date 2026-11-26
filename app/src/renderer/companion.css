@@ -1,6 +1,7 @@
 /* The companion: a small loop and one line, floating in a corner of the
    desktop. The window is transparent and only as big as the pill (plus room
-   for its shadow); on hover it grows upward for a small row of actions. */
+   for its shadow), with room kept above it for a small row of actions that
+   opens on hover. Until the row opens, that room lets clicks through. */
 
 @font-face {
   font-family: 'Literata';
@@ -22,7 +23,9 @@ svg { overflow: visible; }
 .shell { position: absolute; inset: 0; opacity: 0; transition: opacity 240ms cubic-bezier(.2, 0, 0, 1); }
 .shell.on { opacity: 1; }
 /* a thin strip along the pill's top edge moves it */
+/* a thin strip along the top edge moves it (the tile's in the terminal look, the pill's in the drawn one) */
 .grip { position: absolute; left: 30px; right: 30px; bottom: 50px; height: 5px; -webkit-app-region: drag; z-index: 5; }
+.shell.cli .grip { left: 14px; right: 14px; bottom: 112px; }
 
 .cmp-cli { position: absolute; left: 8px; bottom: 8px; display: none; cursor: pointer; }
 .cmp-drawn { position: absolute; left: 8px; bottom: 8px; display: none; isolation: isolate; }

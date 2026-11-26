@@ -321,10 +321,24 @@ function readAnswer(file) {
   return result;
 }
 
+/** The title a review takes once approved: "review the build" becomes "approved the build". */
+function approvedTitle(title) {
+  const rest = typeof title === "string" ? /^review\s+(.+)/i.exec(title.trim())?.[1] : undefined;
+  return rest ? `approved ${rest}` : defaultDoneTitle;
+}
+
+/** Answering a review is the go-ahead: a pause put on while it waited ends with the answer. */
+function liftPause(flow) {
+  if (!isPaused()) return;
+  fs.rmSync(pauseFile, { force: true });
+  append(flow, { answer: "resume", by: "you" });
+}
+
 function settleGate(flow, gate, result) {
-  const { id, wait, doneTitle = defaultDoneTitle } = gate;
+  const { id, wait, doneTitle = approvedTitle(gate.title) } = gate;
   const { answer, auto, text } = result;
   const current = loadGate(flow, id);
+  if (auto !== true && !current.result) liftPause(flow);
   if (answer === "steer") {
     if (!current.result) append(flow, { id, state: "done", title: "asked for changes", answer: "steer", summary: text ?? "" });
     console.log(`GATE=steer\nTEXT=${text ?? ""}`);

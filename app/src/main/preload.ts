@@ -10,7 +10,7 @@ const call =
   (...args: unknown[]) =>
     ipcRenderer.invoke(channel, ...args)
 
-const EVENTS = new Set(['state', 'lines', 'runs', 'project', 'companion', 'flow'])
+const EVENTS = new Set(['state', 'lines', 'runs', 'project', 'companion', 'companion-row', 'flow'])
 
 contextBridge.exposeInMainWorld('bridge', {
   state: call('state'),
@@ -40,7 +40,6 @@ contextBridge.exposeInMainWorld('bridge', {
   handoff: (mode: 'fill' | 'send', text: string) => ipcRenderer.invoke('handoff', mode, text),
   pin: call('pin'),
   companionToggle: call('companionToggle'),
-  companionHover: (isOver: boolean) => ipcRenderer.invoke('companionHover', isOver),
   companionOpen: call('companionOpen'),
   openFolder: call('openFolder'),
   on: (event: string, listener: (payload: unknown) => void) => {

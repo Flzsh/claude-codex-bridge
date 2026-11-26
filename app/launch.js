@@ -65,6 +65,11 @@ if (isStale()) {
   if (process.exitCode) process.exit(process.exitCode)
 }
 
-const child = spawn(electron, [here, ...process.argv.slice(2)], { detached: true, stdio: 'ignore' })
+// The folder also travels as --workdir64 (base64url): when Bridge is already open, Windows hands the
+// arguments to it through a path that can garble letters outside ASCII (a folder like OneDrive\桌面).
+const args = process.argv.slice(2)
+const at = args.indexOf('--workdir')
+if (at !== -1 && args[at + 1]) args.push('--workdir64', Buffer.from(args[at + 1], 'utf8').toString('base64url'))
+const child = spawn(electron, [here, ...args], { detached: true, stdio: 'ignore' })
 child.unref()
 console.log('Bridge opened.')
