@@ -15,9 +15,7 @@ deploy_command:        # e.g. npm run deploy   (empty = stop after merge)
 live_url:              # e.g. https://myapp.com (used for the live check)
 base_branch: main
 
-# How much runs without asking you
-auto_merge: false
-auto_deploy: false
+# Review
 max_review_rounds: 2
 
 # Timeouts in seconds

@@ -16,7 +16,7 @@ Run scripts with the project as the working directory and use the installed skil
 | Read project setting | `cfg.sh <key> [default]` |
 | Prepare prompt | `fill_prompt.py <template> <output> KEY=value ...` |
 | Gemini advisor | `ask_gemini.sh <prompt> <output>` |
-| Contract-only test author | `ask_gemini.sh <prompt> <output> --contract-only` |
+| Contract-only test author | `ask_gemini.sh --isolated <prompt> <output>` |
 | Codex build | `dispatch_codex.sh <ticket> <task-directory>` |
 | Codex review | `codex_review.sh <base-ref> <prompt> <output>` |
 
@@ -28,7 +28,7 @@ Retries preserve per-attempt diagnostics in hidden directories alongside the art
 
 ## Phase mapping and approvals
 
-The phase IDs in JSON map to the workflow: request, understand, plan, synthesis, design, build, verify, review. The actual workflow order and decisions are defined in `SKILL.md`. Some artifacts (screenshots, a scout, review rounds) may be optional. Presence is a display signal only, not completion or approval. A UI must keep explicit user approval of the synthesized plan before implementation, and apply the existing merge/deploy configuration and review/CI gates. Do not infer approval from a Markdown file, an exit code, or a model's suggested action.
+Artifact groups in `task_status.py` map to the workflow: request, understand, plan, synthesis, design, build, verify, review. The actual workflow order and decisions are defined in `SKILL.md`. Some artifacts (screenshots, a scout, review rounds) may be optional. Presence is a display signal only, not completion or approval. Use `flow.py` and `events.jsonl` as the source of truth for numeric phase events and revision-bound gates. See [Workflow UI contract](../plugins/trio-claude-gemini-codex/skills/trio-claude-gemini-codex/references/workflow-ui.md) for Bridge mapping, plan review and explicit push, merge and deploy approvals. Keep review and CI checks. Do not infer approval from a Markdown file, an exit code, or a model's suggested action.
 
 Use one controller per task. Parallel Gemini and Codex calls may write different artifacts; each individual model-output path and Codex worktree has a lock. Before removing an abandoned lock, confirm its process has ended. Never automatically discard partial work or reset a worktree. Existing v1.0 worktrees at the old location can be inspected and removed with Git after their work is integrated. The new dispatcher will refuse a branch already checked out elsewhere.
 
