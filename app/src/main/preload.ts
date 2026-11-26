@@ -10,13 +10,13 @@ const call =
   (...args: unknown[]) =>
     ipcRenderer.invoke(channel, ...args)
 
-const EVENTS = new Set(['state', 'lines', 'runs', 'project', 'companion', 'companion-row', 'flow'])
+const EVENTS = new Set(['state', 'lines', 'runs', 'project', 'companion', 'companion-row', 'flow', 'tabs'])
 
 contextBridge.exposeInMainWorld('bridge', {
   state: call('state'),
   flow: call('flow'),
   answerGate: (gate: string, answer: string, text?: string, t0?: number) => ipcRenderer.invoke('answerGate', gate, answer, text, t0),
-  setPaused: (paused: boolean) => ipcRenderer.invoke('setPaused', paused),
+  setPaused: (paused: boolean, flow?: string) => ipcRenderer.invoke('setPaused', paused, flow),
   steer: (text: string) => ipcRenderer.invoke('steer', text),
   setTheme: (theme: string) => ipcRenderer.invoke('setTheme', theme),
   showFlow: (id: string | null) => ipcRenderer.invoke('showFlow', id),
@@ -41,6 +41,11 @@ contextBridge.exposeInMainWorld('bridge', {
   pin: call('pin'),
   companionToggle: call('companionToggle'),
   companionOpen: call('companionOpen'),
+  deckNext: call('deckNext'),
+  tabs: call('tabs'),
+  selectTab: (key: string) => ipcRenderer.invoke('selectTab', key),
+  closeTab: (key: string) => ipcRenderer.invoke('closeTab', key),
+  reopenTab: call('reopenTab'),
   openFolder: call('openFolder'),
   on: (event: string, listener: (payload: unknown) => void) => {
     if (!EVENTS.has(event)) return () => undefined

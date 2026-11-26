@@ -3,24 +3,34 @@
 set -u
 
 workdir="${BRIDGE_WORKDIR:-$PWD}"
+registry="${BRIDGE_REGISTRY_DIR:-}"
+if [[ -z "$registry" ]]; then
+  plugin_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)" || exit
+  registry="$plugin_root/status/flows"
+fi
 if command -v cygpath >/dev/null 2>&1; then
   workdir="$(cygpath -am -- "$workdir")" || exit
+  registry="$(cygpath -am -- "$registry")" || exit
 fi
 
-# Convert only the workdir. Git Bash must pass event text and run IDs verbatim.
+# Convert only filesystem paths. Git Bash must pass event text and run IDs verbatim.
 MSYS2_ARG_CONV_EXCL='*' exec node -e '
 const fs = require("node:fs");
 const path = require("node:path");
 const { randomBytes } = require("node:crypto");
 const { setTimeout: sleep } = require("node:timers/promises");
 
-const [workdir, command, ...args] = process.argv.slice(1);
+const [directory, registryDirectory, command, ...args] = process.argv.slice(1);
+const workdir = path.isAbsolute(directory) ? directory : path.resolve(directory);
+const registry = path.resolve(registryDirectory);
 const bridge = path.join(workdir, ".bridge");
 const control = path.join(bridge, "control");
 const eventFile = path.join(bridge, "flow.jsonl");
 const currentFile = path.join(bridge, "flow-current");
-const pauseFile = path.join(control, "pause.json");
-const gateFile = id => path.join(control, `gate-${id}.json`);
+const controlDir = flow => flow ? path.join(control, flow) : control;
+const controlDirs = flow => flow ? [controlDir(flow), control] : [control];
+const pauseFile = dir => path.join(dir, "pause.json");
+const gateFile = (dir, id) => path.join(dir, `gate-${id}.json`);
 const now = () => Date.now() / 1000;
 const lanes = ["you", "claude", "gemini", "codex"];
 const states = ["running", "done", "failed", "waiting"];
@@ -169,15 +179,92 @@ function refuseLink(file) {
 function append(flow, event, t = now()) {
   refuseLink(bridge);
   refuseLink(eventFile);
-  fs.appendFileSync(eventFile, JSON.stringify({ t, flow, ...event }) + "\n", "utf8");
+  const entry = { t, flow, ...event };
+  fs.appendFileSync(eventFile, JSON.stringify(entry) + "\n", "utf8");
+  if (flow) {
+    try { updateRegistry(flow, entry); }
+    catch (error) { console.error(`flow.sh: warning: could not update registry for ${flow}: ${error.message.replace(/[\r\n]+/g, " ")}`); }
+  }
 }
 
 function readEvents() {
   return (readText(eventFile) ?? "").split("\n").map(parseJson).filter(event => Number.isFinite(event?.t));
 }
 
-function writeExclusive(file, data) {
+function writeAtomic(file, temporary, text) {
+  refuseLink(file);
+  const fd = fs.openSync(temporary, "wx");
+  try {
+    try { fs.writeFileSync(fd, text, "utf8"); }
+    finally { fs.closeSync(fd); }
+    refuseLink(file);
+    fs.renameSync(temporary, file);
+  } finally {
+    fs.rmSync(temporary, { force: true });
+  }
+}
+
+function readRegistry(file, flow) {
+  let record;
+  try { record = parseJson(readText(file)); }
+  catch { return; }
+  if (record?.v === 1 && record.flow === flow && Number.isFinite(record.t)) return record;
+}
+
+function applyRegistryEvent(record, event) {
+  record.t = event.t;
+  if (event.kind === "flow" && event.state === "done") {
+    record.state = "done";
+    record.gate = null;
+  } else if (event.kind === "gate" && event.state === "waiting" && record.state === "live") {
+    record.gate = { id: event.id, title: event.title, until: event.until ?? null, noAuto: event.noAuto === true };
+  } else if (record.gate && record.gate.id === event.id && event.kind !== "step") {
+    if (isTerminal(event.state)) record.gate = null;
+    else if (event.state === "waiting" && typeof event.paused === "boolean") record.gate.until = event.until ?? null;
+  }
+  if (event.gate && answers.includes(event.answer) && record.gate?.id === event.gate) record.gate = null;
+  if (event.answer === "pause" || event.answer === "resume") record.paused = event.answer === "pause";
+}
+
+function updateRegistry(flow, entry) {
+  refuseLink(registry);
+  fs.mkdirSync(registry, { recursive: true });
+  const file = path.join(registry, `${flow}.json`);
+  for (let attempt = 0; attempt < 5; attempt++) {
+    refuseLink(registry);
+    refuseLink(file);
+    const previous = readRegistry(file, flow);
+    const before = fs.statSync(eventFile, { throwIfNoEntry: false });
+    const events = readEvents().filter(event => event.flow === flow);
+    if (!events.length) events.push(entry);
+    const start = previous ? undefined : events.find(event => event.kind === "flow" && event.state === undefined);
+    const record = previous ?? {
+      v: 1, flow, workdir, title: start?.title ?? null, size: ["small", "medium", "large"].includes(start?.size) ? start.size : null,
+      t0: start?.t ?? null, t: entry.t, state: "live", gate: null, paused: false,
+    };
+    // Replay from the first matching timestamp because concurrent events can share it.
+    const from = Math.max(0, events.findIndex(event => event.t === previous?.t));
+    for (const event of events.slice(from)) applyRegistryEvent(record, event);
+
+    refuseLink(registry);
+    writeAtomic(file, `${file}.tmp-${nonce()}`, JSON.stringify(record));
+    // If another process appended while we published, catch up even if it already wrote a newer record.
+    const after = fs.statSync(eventFile, { throwIfNoEntry: false });
+    if (before?.ino === after?.ino && before?.size === after?.size && before?.mtimeMs === after?.mtimeMs) return;
+  }
+  throw new Error("event log kept changing during registry updates");
+}
+
+function prepareControl(dir) {
+  refuseLink(bridge);
   refuseLink(control);
+  refuseLink(dir);
+  fs.mkdirSync(dir, { recursive: true });
+}
+
+function writeExclusive(file, data) {
+  prepareControl(path.dirname(file));
+  refuseLink(file);
   try { fs.writeFileSync(file, JSON.stringify(data), { flag: "wx" }); }
   catch (error) {
     if (error.code === "EEXIST") return false;
@@ -188,25 +275,24 @@ function writeExclusive(file, data) {
 
 function start(event) {
   const flow = `f${nonce()}`;
+  refuseLink(currentFile);
+  prepareControl(controlDir(flow));
   // A long-lived project keeps the live file small: past flows move to flow-<time>.jsonl.
   const size = fs.statSync(eventFile, { throwIfNoEntry: false })?.size ?? 0;
   if (size > 2 * 1024 * 1024) {
     refuseLink(eventFile);
-    fs.renameSync(eventFile, path.join(bridge, `flow-${new Date().toISOString().replace(/[:.]/g, "-")}.jsonl`));
+    const archived = path.join(bridge, `flow-${new Date().toISOString().replace(/[:.]/g, "-")}.jsonl`);
+    refuseLink(archived);
+    fs.renameSync(eventFile, archived);
   }
   append(flow, event);
-  const temporary = `${currentFile}.${flow}.tmp`;
-  try {
-    fs.writeFileSync(temporary, `${flow}\n`);
-    fs.renameSync(temporary, currentFile);
-  } finally {
-    fs.rmSync(temporary, { force: true });
-  }
+  refuseLink(bridge);
+  writeAtomic(currentFile, `${currentFile}.${flow}.tmp`, `${flow}\n`);
   console.log(`FLOW=${flow}`);
 }
 
-function isPaused() {
-  return fs.statSync(pauseFile, { throwIfNoEntry: false }) !== undefined;
+function isPaused(flow) {
+  return controlDirs(flow).some(dir => fs.statSync(pauseFile(dir), { throwIfNoEntry: false }) !== undefined);
 }
 
 function newestRunningClaude(flow) {
@@ -235,10 +321,10 @@ function newestRunningClaude(flow) {
 }
 
 async function check(flow, takeSteers = true) {
-  if (isPaused()) {
+  if (isPaused(flow)) {
     console.log("PAUSED=1");
     const until = now() + defaultMax;
-    while (isPaused()) {
+    while (isPaused(flow)) {
       if (now() >= until) {
         console.log("PAUSED=still");
         return false;
@@ -250,12 +336,13 @@ async function check(flow, takeSteers = true) {
   // Steers are for Claude: a Codex or Gemini step waits out a pause but leaves them where they are.
   if (!takeSteers) return true;
   // The desktop and CLI put the creation timestamp in the filename.
-  const steers = (fs.existsSync(control) ? fs.readdirSync(control) : []).filter(name => /^steer-.+\.json$/.test(name));
-  steers.sort((a, b) => a.localeCompare(b, "en", { numeric: true }));
+  const steers = controlDirs(flow).flatMap(dir => (fs.existsSync(dir) ? fs.readdirSync(dir) : [])
+    .filter(name => /^steer-.+\.json$/.test(name)).map(name => ({ dir, name })));
+  steers.sort((a, b) => a.name.localeCompare(b.name, "en", { numeric: true }));
   let step;
   let haveRecipient = false;
-  for (const name of steers) {
-    const file = path.join(control, name);
+  for (const { dir, name } of steers) {
+    const file = path.join(dir, name);
     const steer = parseJson(readText(file));
     if (steer === undefined) continue; // Another check took it, or the writer has not finished.
     if (typeof steer?.text !== "string") throw new Error(`invalid steer in ${file}`);
@@ -263,7 +350,11 @@ async function check(flow, takeSteers = true) {
       step = newestRunningClaude(flow);
       haveRecipient = true;
     }
-    try { fs.renameSync(file, `${file}.taken`); }
+    const taken = `${file}.taken`;
+    prepareControl(dir);
+    refuseLink(file);
+    refuseLink(taken);
+    try { fs.renameSync(file, taken); }
     catch (error) {
       if (error.code === "ENOENT") continue; // Another check won the rename.
       throw error;
@@ -276,13 +367,9 @@ async function check(flow, takeSteers = true) {
 
 function loadGate(flow, id) {
   const events = readEvents();
-  const opens = events.filter(event => event.id === id && event.kind === "gate" && event.state === "waiting");
-  const definition = opens.find(event => (event.flow || undefined) === flow);
-  if (!definition) {
-    // Answer filenames are shared by flows, so a gate ID belongs to one flow.
-    if (opens.length) throw new UsageError(`gate ${id} belongs to a different flow`);
-    return;
-  }
+  const definition = events.find(event => (event.flow || undefined) === flow &&
+    event.id === id && event.kind === "gate" && event.state === "waiting");
+  if (!definition) return;
   const gate = { wait: defaultWait, max: defaultMax, paused: false, ...definition };
   // A timed gate always has a deadline: recover it from when it opened if the record has none.
   if (!gate.noAuto && !gate.paused && gate.until === undefined) gate.until = (definition.t ?? now()) + gate.wait;
@@ -305,7 +392,7 @@ function loadGate(flow, id) {
 
 function openGate(flow, event) {
   const at = now();
-  const paused = isPaused();
+  const paused = isPaused(flow);
   const gate = { ...event, paused, until: paused || event.noAuto ? undefined : at + event.wait };
   append(flow, gate, at);
   return gate;
@@ -329,9 +416,22 @@ function approvedTitle(title) {
 
 /** Answering a review is the go-ahead: a pause put on while it waited ends with the answer. */
 function liftPause(flow) {
-  if (!isPaused()) return;
-  fs.rmSync(pauseFile, { force: true });
+  if (!removePause(flow)) return;
   append(flow, { answer: "resume", by: "you" });
+}
+
+function removePause(flow) {
+  // the flow own pause, and a shared one an older build left (it holds every flow)
+  let removed = false;
+  for (const dir of controlDirs(flow)) {
+    const file = pauseFile(dir);
+    if (!fs.lstatSync(file, { throwIfNoEntry: false })) continue;
+    prepareControl(dir);
+    refuseLink(file);
+    fs.rmSync(file, { force: true });
+    removed = true;
+  }
+  return removed;
 }
 
 function settleGate(flow, gate, result) {
@@ -367,13 +467,14 @@ async function waitForGate(flow, gate) {
     console.log(gate.result === "steer" ? `GATE=steer\nTEXT=${gate.steerText ?? ""}` : `GATE=${gate.result}`);
     return;
   }
-  const file = gateFile(gate.id);
+  const files = controlDirs(flow).map(dir => gateFile(dir, gate.id));
+  const localFile = files[0];
   const started = now();
   let sliceUntil = started + gate.max;
   let pausedAt = gate.paused ? started : undefined;
   for (;;) {
     const at = now();
-    const paused = isPaused();
+    const paused = isPaused(flow);
     if (paused !== gate.paused) {
       if (paused) pausedAt = at;
       else sliceUntil += at - pausedAt;
@@ -382,11 +483,13 @@ async function waitForGate(flow, gate) {
       append(flow, { id: gate.id, state: "waiting", paused, until: gate.until }, at);
     }
 
-    let result = readAnswer(file);
-    if (!result && !paused && !gate.noAuto && gate.until <= at && gate.until <= sliceUntil) {
-      if (isPaused()) continue;
+    // an answer in the shared folder counts only when written after this review opened
+    const answerFile = files.find((file, i) => fs.existsSync(file) && (i === 0 || !(readAnswer(file)?.t < (gate.t ?? started) - 1)));
+    let result = answerFile ? readAnswer(answerFile) : undefined;
+    if (!answerFile && !paused && !gate.noAuto && gate.until <= at && gate.until <= sliceUntil) {
+      if (isPaused(flow) || files.some(file => fs.existsSync(file))) continue;
       const auto = { answer: "approve", auto: true };
-      result = writeExclusive(file, auto) ? auto : readAnswer(file);
+      result = writeExclusive(localFile, auto) ? auto : readAnswer(localFile);
     }
     if (result) return settleGate(flow, gate, result);
     if (!paused && at >= sliceUntil) {
@@ -399,11 +502,13 @@ async function waitForGate(flow, gate) {
 
 async function main() {
   const event = parseEvent();
-  fs.mkdirSync(control, { recursive: true });
+  prepareControl(control);
   if (command === "start") return start(event);
 
-  // An explicitly empty override pins a runner to legacy, unscoped events.
-  const flow = (process.env.BRIDGE_FLOW_ID ?? readText(currentFile)?.trim()) || undefined;
+  // set but empty: no flow (a run that started before any flow stays out of later ones); unset: the current flow
+  const id = process.env.BRIDGE_FLOW_ID !== undefined ? process.env.BRIDGE_FLOW_ID : readText(currentFile)?.trim();
+  const flow = id ? safeId(id) : undefined;
+  const dir = controlDir(flow);
   switch (command) {
     case "check":
       await check(flow);
@@ -415,7 +520,7 @@ async function main() {
     }
     case "steer":
       if (event.to === "claude") {
-        const file = path.join(control, `steer-${Date.now()}-${randomBytes(6).toString("hex")}.json`);
+        const file = path.join(dir, `steer-${Date.now()}-${randomBytes(6).toString("hex")}.json`);
         if (!writeExclusive(file, { text: event.summary, by: "you", t: now() })) throw new Error(`steer already exists: ${file}`);
       }
       break;
@@ -425,14 +530,21 @@ async function main() {
       if (!gate && command === "wait") throw new UsageError(`unknown gate: ${event.id}`);
       return waitForGate(flow, gate ?? openGate(flow, event));
     }
-    case "answer":
-      if (event.answer === "pause") { refuseLink(control); refuseLink(pauseFile); fs.writeFileSync(pauseFile, JSON.stringify({ t: now() })); }
-      else if (event.answer === "resume") fs.rmSync(pauseFile, { force: true });
-      else if (!writeExclusive(gateFile(event.gate), { answer: event.answer, text: event.text })) {
+    case "answer": {
+      if (event.answer === "pause") {
+        const file = pauseFile(dir);
+        prepareControl(dir);
+        refuseLink(file);
+        fs.writeFileSync(file, JSON.stringify({ t: now() }));
+      } else if (event.answer === "resume") {
+        removePause(flow);
+      } else if ((flow && fs.existsSync(gateFile(control, event.gate))) ||
+          !writeExclusive(gateFile(dir, event.gate), { answer: event.answer, text: event.text })) {
         console.log("ANSWER=taken");
         return;
       }
       break;
+    }
   }
   append(flow, event);
 }
@@ -441,4 +553,4 @@ main().catch(error => {
   console.error(`flow.sh: ${error.message}`);
   process.exitCode = error instanceof UsageError ? 2 : 1;
 });
-' -- "$workdir" "$@"
+' -- "$workdir" "$registry" "$@"

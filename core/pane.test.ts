@@ -135,12 +135,14 @@ group('the pane picture', () => {
     })
   }
 
-  test('laid out for the pane: its width from the cells across, in steps, within bounds', () => {
+  test('laid out for the pane: its width from the cells across, in steps, within bounds, never wider than the pane', () => {
     expect(pictureWidth(0)).toBe(460)
-    expect(pictureWidth(32)).toBe(260)
-    expect(pictureWidth(61)).toBe(480)
-    expect(pictureWidth(10)).toBe(240)
+    expect(pictureWidth(32)).toBe(220)
+    expect(pictureWidth(61)).toBe(420)
+    expect(pictureWidth(10)).toBe(200)
     expect(pictureWidth(200)).toBe(620)
+    // no wider than the pane (at 7 px or more a cell), or its frame is narrowed and the drawing shrinks in it
+    for (const columns of [40, 55, 61, 70, 80]) expect(pictureWidth(columns)).toBeLessThanOrEqual(columns * 7)
   })
 
   for (const look of ['cli', 'drawn'] as const) {
@@ -155,6 +157,35 @@ group('the pane picture', () => {
       for (const [, x] of svg.matchAll(/<text x="([\d.]+)"[^>]*>(?:you|claude|gemini|codex|You|Claude|Gemini|Codex)<\/text>/g)) expect(Number(x)).toBeLessThan(260 - 40)
     })
   }
+
+  for (const look of ['cli', 'drawn'] as const) {
+    test(`${look}: liquid runs down the line into each working step, and stands still when paused`, () => {
+      // mid-build two steps work: a line runs into each
+      const m = paneModel(flow, head, false, 45)!
+      expect(m.flows.map(one => one.lane).sort()).toEqual(['claude', 'codex'])
+      expect(m.flows.every(one => one.cells.length > 1)).toBe(true)
+      const svg = paneSvg(m, look, 45)
+      const liquid = /stroke-dasharray="1[34] 5 3 [56]"/g
+      expect((svg.match(liquid) ?? []).length).toBe(2)
+      // paused, nothing runs; before the build, no step works and no line runs
+      expect((paneSvg(paneModel(flow, head, true, 45)!, look, 45).match(liquid) ?? []).length).toBe(0)
+      expect(paneModel(flow, head, false, 2)?.flows ?? []).toEqual([])
+    })
+  }
+
+  test('between steps, Claude at work shows as a working row at the end; not when a step works or it is paused', () => {
+    const working = (m: ReturnType<typeof paneModel>) => (m?.rows ?? []).filter(r => r.kind === 'step' && r.id === '~claude').length
+    // at 21 s the plans are merged and nothing runs yet
+    const between = flow.filter(e => e.t <= 20.6)
+    expect(working(paneModel(between, head, false, 20.6, true))).toBe(1)
+    expect(working(paneModel(between, head, false, 20.6, false))).toBe(0)
+    expect(working(paneModel(between, head, true, 20.6, true))).toBe(0)
+    // mid-build two steps work: no extra row
+    expect(working(paneModel(flow, head, false, 45, true))).toBe(0)
+    // a review waits for you: Claude waits too, no working row
+    expect(working(paneModel(flow, head, false, 30, true))).toBe(0)
+    expect(paneSvg(paneModel(between, head, false, 20.6, true)!, 'cli', 20.6)).toContain('working on the next step')
+  })
 
   test('text is escaped', () => {
     const svg = paneSvg(paneModel(flow, { ...head, title: 'a <b> & "c"' }, false, 45)!, 'cli', 45)

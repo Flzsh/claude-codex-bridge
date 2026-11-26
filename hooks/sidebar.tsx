@@ -103,15 +103,23 @@ async function readEvents($: EngineInterface): Promise<FlowEvent[]> {
   return events
 }
 
+/** A flow's control folders: its own, then the shared one (older builds, or no flow). */
+function controlDirs(flow: string | null): string[] {
+  const shared = `${cwd}/.bridge/control`
+  return flow && /^[\w.-]{1,80}$/.test(flow) && !flow.startsWith('.') ? [`${shared}/${flow}`, shared] : [shared]
+}
+
 /** Notes for Claude not yet read: flow.sh marks one .taken when Claude's next step reads it. */
-async function waitingNotes($: EngineInterface): Promise<number> {
-  const dir = `${cwd}/.bridge/control`
-  try {
-    if (!(await $.fs.exists(dir))) return 0
-    return (await $.fs.list(dir)).filter(entry => entry.kind === 'file' && /^steer-.+\.json$/.test(entry.name)).length
-  } catch {
-    return 0
+async function waitingNotes($: EngineInterface, flow: string | null): Promise<number> {
+  let count = 0
+  for (const dir of controlDirs(flow)) {
+    try {
+      if (await $.fs.exists(dir)) count += (await $.fs.list(dir)).filter(entry => entry.kind === 'file' && /^steer-.+\.json$/.test(entry.name)).length
+    } catch {
+      // gone between the look and the list
+    }
   }
+  return count
 }
 
 /** Keeps the pane in step with the flow, the app's look and Claude's own state. */
@@ -132,11 +140,13 @@ export async function pollSidebar($: EngineInterface) {
           state: mine.some(e => e.kind === 'flow' && e.state === 'done') ? 'done' : null,
         }
       : null
-  const paused = await $.fs.exists(`${cwd}/.bridge/control/pause.json`)
+  // paused by the flow's own pause, or a shared one (older builds)
+  let paused = false
+  for (const dir of controlDirs(id)) if (await $.fs.exists(`${dir}/pause.json`)) paused = true
   const view = sidebarView(mine, head, paused, now)
-  const model = view ? paneModel(mine, head, paused, now) : null
   const status = currentStatus()
   const busy = status.state !== 'idle'
+  const model = view ? paneModel(mine, head, paused, now, busy) : null
 
   // with no workflow: the shape of one, waiting for you, then the last one and the last runs
   const empty: EmptyModel | null = model
@@ -161,7 +171,7 @@ export async function pollSidebar($: EngineInterface) {
     }
   }
 
-  const waiting = await waitingNotes($)
+  const waiting = await waitingNotes($, id)
   const before = await read($, sidebar)
   const readAt = waiting < notesBefore ? now : before.notes.readAt !== null && now - before.notes.readAt < READ_SHOWN ? before.notes.readAt : null
   notesBefore = waiting
@@ -186,11 +196,12 @@ async function say($: EngineInterface, notice: string | null) {
 }
 
 /** Runs flow.sh in this session's folder, as the app and Claude do. */
-async function flowSh($: EngineInterface, args: string[]): Promise<{ ok: boolean; out: string }> {
+/** `flow`: the flow the pane shows, so an answer never lands on one that started meanwhile. */
+async function flowSh($: EngineInterface, args: string[], flow: string | null = null): Promise<{ ok: boolean; out: string }> {
   try {
     const result = await $.process.run([bash, bashPath(`${root}/skills/codex-bridge/flow.sh`), ...args], {
       cwd,
-      env: { BRIDGE_WORKDIR: cwd },
+      env: { BRIDGE_WORKDIR: cwd, ...(flow ? { BRIDGE_FLOW_ID: flow } : {}) },
       timeoutMs: 20_000,
     })
     return { ok: result.exitCode === 0, out: `${result.stdout}\n${result.stderr}`.trim() }
@@ -202,7 +213,7 @@ async function flowSh($: EngineInterface, args: string[]): Promise<{ ok: boolean
 async function answer($: EngineInterface, kind: 'approve' | 'decline' | 'steer', text?: string) {
   const { gate } = await read($, sidebar)
   if (!gate) return say($, 'That review is already closed.')
-  const run = await flowSh($, ['answer', kind, '--gate', gate.id, ...(text ? ['--text', text] : [])])
+  const run = await flowSh($, ['answer', kind, '--gate', gate.id, ...(text ? ['--text', text] : [])], (await read($, sidebar)).flow)
   if (!run.ok) return say($, `Could not answer: ${run.out.split('\n').at(-1) ?? 'flow.sh failed'}`)
   if (run.out.includes('ANSWER=taken')) return say($, 'Already answered (the time ran out, or the app answered first).')
   await say($, kind === 'approve' ? 'Approved. Claude carries on.' : kind === 'decline' ? 'Declined. Claude stops and asks you what instead.' : 'Sent. Claude applies the change and opens a new review.')
@@ -211,7 +222,7 @@ async function answer($: EngineInterface, kind: 'approve' | 'decline' | 'steer',
 
 async function setPause($: EngineInterface) {
   const { paused } = await read($, sidebar)
-  const run = await flowSh($, ['answer', paused ? 'resume' : 'pause'])
+  const run = await flowSh($, ['answer', paused ? 'resume' : 'pause'], (await read($, sidebar)).flow)
   await say($, run.ok ? (paused ? 'Resumed.' : 'Paused. Claude waits at its next step.') : 'Could not change the pause.')
   await pollSidebar($)
 }
@@ -227,15 +238,16 @@ export function registerSidebar(on: On) {
 
     // the terminal draws no Svg: there the picture's words stand in for it
     const drawsPicture = e.surface !== 'terminal' && 'Svg' in table && Boolean(st.svg)
-    // An image, given its width alone: a pane narrower than that shrinks it whole, its height
-    // following. (An interactive frame keeps the height it is given, or 150 px, and a narrow
-    // pane then shrinks the drawing inside it with blank bands above and below. Its motion runs
-    // as an image too.) Allowed a fifth wider than it is laid out, so it fills the pane even
-    // where a cell is wider than pictureWidth guesses.
-    const width = Math.round(Number(/^<svg[^>]*\swidth="(\d+(?:\.\d+)?)"/.exec(st.svg)?.[1] ?? SIDEBAR_W) * 1.2)
+    // In its interactive frame: the desktop runs a picture's motion only there (as a plain image
+    // it stands still). The frame takes its size outright (else it is 150 px tall), and it is
+    // laid out no wider than the pane (pictureWidth), since a frame narrowed to fit keeps its
+    // height and leaves blank bands around the drawing. Centred, the pane's ground beside it.
+    const size = (attr: string, fallback: number) => Math.round(Number(new RegExp(`^<svg[^>]*\\s${attr}="(\\d+(?:\\.\\d+)?)"`).exec(st.svg)?.[1] ?? fallback))
     const pictureEl =
       drawsPicture && 'Svg' in table ? (
-        <table.Svg key={`picture-${st.look}`} source={st.svg} alt={st.alt} width={width} />
+        <Box flexDirection="column" alignItems="center">
+          <table.Svg key={`picture-${st.look}`} source={st.svg} alt={st.alt} width={size('width', SIDEBAR_W)} height={size('height', st.height)} isInteractive />
+        </Box>
       ) : (
         <Text color={st.gate ? 'warning' : undefined}>{st.alt || 'No workflow.'}</Text>
       )
@@ -271,7 +283,7 @@ export function registerSidebar(on: On) {
         const noAuto = st.gate.noAuto
         parts = (
           <Box flexDirection="column" gap="xs">
-            {words(noAuto ? 'This one waits for your yes.' : st.paused ? 'Paused: it waits for you.' : 'With no answer it carries on when the time runs out. For a change, say it in the chat.')}
+            {words(noAuto ? 'This one waits for your yes.' : st.paused ? 'Paused: it waits for you.' : 'With no answer it carries on when the time runs out. Ask for changes in the chat.')}
             <Box flexDirection="row" gap="xs" flexWrap="wrap">
               {press('gate-approve', noAuto ? 'Yes' : 'Approve', `✓ ${say(noAuto ? 'Yes' : 'Approve')}`, th.ok, () => answer($, 'approve'))}
               {noAuto ? null : pause('gate-pause')}
@@ -283,7 +295,7 @@ export function registerSidebar(on: On) {
         parts = (
           <Box flexDirection="column" gap="xs">
             <Box flexDirection="row" justifyContent="space-between" alignItems="center" gap="xs">
-              {words(st.paused ? 'Paused: Claude waits at its next step.' : 'Running. To steer it, say so in the chat.')}
+              {words(st.paused ? 'Paused: Claude waits at its next step.' : 'Running. To steer it, tell Claude in the chat.')}
               {pause('flow-pause')}
             </Box>
             {st.notes.waiting > 0 ? words(`◐ ${st.notes.waiting === 1 ? 'Your note waits' : `${st.notes.waiting} notes wait`} for Claude's next step`, th.warn) : null}
@@ -342,7 +354,7 @@ export function registerSidebar(on: On) {
       controls = (
         <Box flexDirection="column" marginTop={1}>
           <Box flexDirection="row" justifyContent="space-between">
-            <Text dimColor>{st.paused ? 'Paused: Claude waits at its next step.' : 'Running. To steer it, say so in the chat.'}</Text>
+            <Text dimColor>{st.paused ? 'Paused: Claude waits at its next step.' : 'Running. To steer it, tell Claude in the chat.'}</Text>
             <Button key="flow-pause" label={st.paused ? 'Resume' : 'Pause'} onPress={() => setPause($)} />
           </Box>
           {st.notes.waiting > 0 && <Text color="suggestion">{`◐ ${st.notes.waiting === 1 ? 'Your note waits' : `${st.notes.waiting} notes wait`} for Claude's next step`}</Text>}

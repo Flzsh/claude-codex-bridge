@@ -2,19 +2,20 @@
 // conversations, and the IPC the window uses. Files and processes are only
 // touched here; the window reaches them through preload.ts.
 
-import { app, BrowserWindow, dialog, ipcMain, Notification, screen, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, Notification, screen, shell } from 'electron'
 import { existsSync, statSync, watch, type FSWatcher } from 'node:fs'
 import { mkdir, readdir, readFile, stat, unlink, writeFile } from 'node:fs/promises'
-import { join, resolve } from 'node:path'
+import { basename, join, resolve } from 'node:path'
 
 import type { Job, Provider } from '../../../types'
 import { CODEX_MODELS, shortTitle, SIZES, type Size, STAGES } from '../../../core/console'
 import { fold } from '../../../core/flow'
 import { EFFORTS, providerName } from '../../../core/jobs'
 import { findBash } from './bash'
-import { answerGate, flowPayload, isLive, safeId, setPaused, steerClaude, steerStep, type FlowPayload } from './flow'
+import { answerGate, flowPayload, isLive, queuePause, safeId, setPaused, steerClaude, steerStep, type FlowPayload } from './flow'
 import type { Mode, Paths, RunHandle, RunResult, Threads } from './contracts'
 import { pluginPaths } from './paths'
+import { deckOrder, readRegistry, sweepRegistry, tabOrder, type Workflow } from './registry'
 import { startRun } from './runner'
 import {
   appendLog,
@@ -32,6 +33,8 @@ import { finish, newThreads, reserve, reset } from './threads'
 
 // dist/main.cjs -> app/dist -> app -> the plugin's folder.
 const PLUGIN_ROOT = resolve(__dirname, '..', '..')
+// The app's logo: the terminal prompt, its > drawn as the workflow (app/assets).
+const ICON = join(__dirname, '..', 'assets', process.platform === 'win32' ? 'icon.ico' : 'icon-256.png')
 const paths: Paths = pluginPaths(PLUGIN_ROOT)
 const SWEEP_MS = 2000
 const KEEP_ENTRIES = 300
@@ -213,6 +216,7 @@ async function snapshot() {
     bashError,
     delivery,
     claudeHere,
+    claudeBusy,
     threads: {
       codex: { continuing: Boolean(threads.codex.session), running: running.get('codex')?.startedAt ?? null },
       gemini: { continuing: Boolean(threads.gemini.session), running: running.get('gemini')?.startedAt ?? null },
@@ -308,14 +312,162 @@ async function sweep() {
   } catch {
     // A file mid-write: the next sweep reads it.
   }
+  await readWorkflows().catch(() => undefined)
   latestClaude = await readClaudeStatus(config.workdir)
   await checkDelivery()
   const here = latestClaude?.here === true
-  if (here !== claudeHere) {
+  // this folder's Claude at work: the window shows it working between steps
+  const busy = here && latestClaude !== null && latestClaude.state !== 'idle'
+  if (here !== claudeHere || busy !== claudeBusy) {
     claudeHere = here
+    claudeBusy = busy
     send('state', await snapshot())
   }
   void updateCompanion()
+}
+
+// ------------------------------------------------- every workflow, in every folder
+
+/** flow.sh keeps one small file per workflow here, in whatever folder it runs. */
+const REGISTRY = join(PLUGIN_ROOT, 'status', 'flows')
+let registry: Workflow[] = []
+let registrySwept = 0
+/** Tabs the owner closed (by flow id); one comes back when it waits for an answer. */
+const closedTabs = new Set<string>()
+/** The order they were closed in, for Ctrl+Shift+T. */
+const closedOrder: string[] = []
+/** The card the owner brought to the top of the companion's deck; null: the most urgent. */
+let deckPinned: string | null = null
+/** What the companion shows and answers: the deck's top card, else this folder's newest flow. */
+let companionFlow: { workdir: string | null; payload: FlowPayload } = { workdir: null, payload: { flow: null, events: [], paused: false, flows: [] } }
+let lastTabsText = ''
+/** Reviews in other folders already announced. */
+const announcedElsewhere = new Set<string>()
+const foldCase = process.platform === 'win32' || process.platform === 'darwin'
+const samePath = (a: string, b: string) => (foldCase ? resolve(a).toLowerCase() === resolve(b).toLowerCase() : resolve(a) === resolve(b))
+
+type TabMark = 'work' | 'wait' | 'pause' | 'done' | 'quiet' | 'idle'
+type TabInfo = { key: string; flow: string | null; workdir: string; title: string; folder: string; mark: TabMark; active: boolean }
+
+/** The window's tabs: every workflow by when it started, and this folder when nothing of it runs. */
+function tabsNow(): TabInfo[] {
+  const dir = config.workdir
+  const shown = latestFlow.flow?.id ?? null
+  const mark = (w: Workflow): TabMark => (w.gate ? 'wait' : w.paused ? 'pause' : w.state === 'done' ? 'done' : w.quiet ? 'quiet' : 'work')
+  const tabs: TabInfo[] = tabOrder(registry, closedTabs).map(w => ({
+    key: w.flow,
+    flow: w.flow,
+    workdir: w.workdir,
+    title: w.title,
+    folder: basename(w.workdir),
+    mark: mark(w),
+    active: dir !== null && samePath(w.workdir, dir) && w.flow === shown,
+  }))
+  if (dir && !tabs.some(tab => tab.active)) {
+    const shownElsewhere = latestFlow.flow && !closedTabs.has(latestFlow.flow.id) && !registry.some(w => w.flow === latestFlow.flow?.id)
+    tabs.push({ key: `dir:${dir}`, flow: null, workdir: dir, title: shownElsewhere ? latestFlow.flow!.title : basename(dir), folder: basename(dir), mark: 'idle', active: true })
+  }
+  return tabs
+}
+
+function sendTabs() {
+  const tabs = tabsNow()
+  const text = JSON.stringify(tabs)
+  if (text === lastTabsText) return
+  lastTabsText = text
+  send('tabs', tabs)
+}
+
+let workflowsRun: Promise<void> | null = null
+let workflowsAgain = false
+/** One read of the registry at a time: one asked for meanwhile runs once after it. */
+async function readWorkflows(): Promise<void> {
+  if (workflowsRun) {
+    workflowsAgain = true
+    return workflowsRun
+  }
+  workflowsRun = (async () => {
+    do {
+      workflowsAgain = false
+      await readWorkflowsOnce()
+    } while (workflowsAgain)
+  })().finally(() => {
+    workflowsRun = null
+  })
+  return workflowsRun
+}
+
+/** Flows the app has seen in their own folder's log: only those get the queue's pause. */
+const verifiedFlows = new Set<string>()
+/** Reviews seen waiting: a new one sends the deck back to its own order. */
+const seenGates = new Set<string>()
+
+/** Reads the registry; the deck's top card is read from its own folder for the companion. */
+async function readWorkflowsOnce() {
+  const at = Date.now() / 1000
+  registry = await readRegistry(REGISTRY, at)
+  if (at - registrySwept > 600) {
+    registrySwept = at
+    void sweepRegistry(REGISTRY, at).catch(() => 0)
+  }
+  // a review that just opened brings the deck back to its own order (most urgent first)
+  for (const w of registry) {
+    if (!w.gate) continue
+    const key = `${w.flow}|${w.gate.id}`
+    if (seenGates.has(key)) continue
+    seenGates.add(key)
+    deckPinned = null
+  }
+  const deck = deckOrder(registry, deckPinned)
+  const top = deck[0]
+  // the review queue: of the timed reviews waiting, only the top card's counts down; a hold is
+  // let go when its turn comes or its review closes
+  for (const w of registry) {
+    const hold = w.state === 'live' && w.gate !== null && !w.gate.noAuto && w.flow !== top?.flow
+    if (hold && !verifiedFlows.has(w.flow)) {
+      // only into a folder whose log has this flow (the registry could name any folder)
+      if ((await flowPayload(w.workdir, w.flow).catch(() => null))?.flow?.id !== w.flow) continue
+      verifiedFlows.add(w.flow)
+    }
+    await queuePause(w.workdir, w.flow, hold).catch(() => undefined)
+  }
+  if (top && !(config.workdir && samePath(top.workdir, config.workdir) && top.flow === liveFlow.flow?.id)) {
+    const payload = await flowPayload(top.workdir, top.flow)
+    // a flow no longer in its folder's log (the log was started afresh) is not shown in its place
+    companionFlow = payload.flow?.id === top.flow ? { workdir: top.workdir, payload } : { workdir: config.workdir, payload: liveFlow }
+  } else companionFlow = { workdir: config.workdir, payload: liveFlow }
+  // a review waiting in another folder is announced too (this folder's are announced as they open)
+  for (const w of registry) {
+    if (!w.gate || (config.workdir && samePath(w.workdir, config.workdir))) continue
+    const key = `${w.flow}|${w.gate.id}`
+    if (announcedElsewhere.has(key)) continue
+    announcedElsewhere.add(key)
+    announceGate(`${w.gate.title} · ${basename(w.workdir)}`, w.title, w.gate.noAuto)
+  }
+  sendTabs()
+}
+
+/** Points the window at a tab: its folder (as picking a folder does) and its flow. */
+async function selectTab(key: string): Promise<{ error?: string }> {
+  const tab = tabsNow().find(one => one.key === key)
+  if (!tab) return { error: 'that workflow is gone' }
+  if (!config.workdir || !samePath(tab.workdir, config.workdir)) {
+    const result = await setWorkdir(tab.workdir)
+    if (result.error) return result
+  }
+  config.shownFlow = tab.flow === null ? null : safeId(tab.flow)
+  saveConfig()
+  lastFlowText = ''
+  await sweep()
+  return {}
+}
+
+/** The companion's deck: how many, and the cards behind the top one. */
+function deckInfo() {
+  const deck = deckOrder(registry, deckPinned)
+  const top = deck[0]
+  if (!top || deck.length < 2) return null
+  return { count: deck.length, behind: deck.slice(1, 3).map(w => ({ wait: w.gate !== null })), folder: basename(top.workdir), title: top.title }
 }
 
 // ----------------------------------------------------------- Claude's status
@@ -380,8 +532,8 @@ async function sweepFlow(dir: string) {
 }
 
 /** The review a click means: still waiting, in the live flow, and the very one that was on screen. */
-function openGate(gate: string, t0: unknown) {
-  const step = fold(liveFlow.events, Date.now() / 1000).get(gate)
+function openGate(gate: string, t0: unknown, events = liveFlow.events) {
+  const step = fold(events, Date.now() / 1000).get(gate)
   if (!step || step.kind !== 'gate' || step.state !== 'waiting') return null
   if (typeof t0 === 'number' && Math.abs(step.t0 - t0) > 0.01) return null
   return step
@@ -437,7 +589,8 @@ async function steer(raw: string): Promise<{ ok?: boolean; error?: string; route
   if (!dir) return { error: 'Pick a folder first' }
   const body = raw.trim()
   if (!body) return { error: 'Nothing to send' }
-  const flowId = liveFlow.flow && liveFlow.flow.state !== 'done' ? liveFlow.flow.id : null
+  // the flow on screen (a tab may show an older one of this folder)
+  const flowId = latestFlow.flow && latestFlow.flow.state !== 'done' ? latestFlow.flow.id : null
   const at = body.match(/^@(codex|gemini)\b\s*/i)
   if (at) {
     const who = (at[1] ?? '').toLowerCase() as Provider
@@ -502,6 +655,7 @@ async function checkDelivery() {
 
 /** Whether a Claude Code session with the plugin is open in this folder (its status file keeps fresh). */
 let claudeHere = false
+let claudeBusy = false
 
 // ------------------------------------------------------------------ runs
 
@@ -558,14 +712,28 @@ async function runPrompt(provider: Provider, prompt: string, env?: Record<string
  * One IPC call. Only this app's own window may call, and every argument is
  * checked here at run time (the window's types are not trusted).
  */
+/** True while a call from the companion starts (read it before the first await). */
+let callFromCompanion = false
+
 function handle<T extends unknown[]>(channel: string, fn: (...args: T) => unknown, fromCompanion = false) {
   ipcMain.handle(channel, (event, ...args) => {
     const isCompanion = fromCompanion && companion !== null && event.sender === companion.webContents
     if (!isCompanion && (!window || event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame)) {
       throw new Error('Not from the Bridge window')
     }
-    return fn(...(args as T))
+    callFromCompanion = isCompanion
+    try {
+      return fn(...(args as T))
+    } finally {
+      callFromCompanion = false
+    }
   })
+}
+
+/** Where an answer goes: the companion's top card when it comes from the companion, else this folder's newest flow. */
+function answerTarget(): { workdir: string | null; payload: FlowPayload } {
+  // the window: the flow its tab shows; the companion: its top card
+  return callFromCompanion ? companionFlow : { workdir: config.workdir, payload: latestFlow }
 }
 
 const PROVIDERS: readonly string[] = ['codex', 'gemini']
@@ -590,21 +758,24 @@ function wireIpc() {
   handle('state', () => snapshot())
   handle('flow', () => latestFlow)
   const gateCall = async (gate: unknown, answer: unknown, note: unknown, t0: unknown) => {
-    const dir = config.workdir
+    const target = answerTarget()
+    const dir = target.workdir
     if (!dir) return { error: 'Pick a folder first' }
     if (answer !== 'approve' && answer !== 'decline' && answer !== 'steer') throw new Error('Unknown answer')
-    const step = openGate(safeId(gate), t0)
+    const step = openGate(safeId(gate), t0, target.payload.events)
     if (!step) return { error: 'that review is already closed' }
     if (answer === 'steer' && step.noAuto) return { error: 'this one needs a yes or a not now' }
-    const result = await answerGate(dir, liveFlow.flow?.id ?? null, step.id, answer, typeof note === 'string' ? note.slice(0, 4000) : undefined)
+    const result = await answerGate(dir, target.payload.flow?.id ?? null, step.id, answer, typeof note === 'string' ? note.slice(0, 4000) : undefined)
     await sweep()
     return result
   }
   handle('answerGate', gateCall, true)
-  const pauseCall = async (on: unknown) => {
-    const dir = config.workdir
+  const pauseCall = async (on: unknown, flow?: unknown) => {
+    const target = answerTarget()
+    const dir = target.workdir
     if (!dir) return { error: 'Pick a folder first' }
-    await setPaused(dir, on === true, liveFlow.flow?.id ?? null)
+    if (typeof flow === 'string' && flow !== (target.payload.flow?.id ?? '')) return { error: 'that workflow changed: try again' }
+    await setPaused(dir, on === true, target.payload.flow?.id ?? null)
     await sweep()
     return { ok: true }
   }
@@ -618,6 +789,42 @@ function wireIpc() {
     void updateCompanion()
     send('state', await snapshot())
   })
+  handle('tabs', () => tabsNow())
+  handle('selectTab', async (key: unknown) => selectTab(text(key, 2000)))
+  handle('closeTab', async (key: unknown) => {
+    const tabs = tabsNow()
+    const at = tabs.findIndex(one => one.key === key)
+    const tab = tabs[at]
+    if (!tab || tab.flow === null) return {}
+    closedTabs.add(tab.flow)
+    closedOrder.push(tab.flow)
+    if (tab.active) {
+      const next = tabs[at + 1] ?? tabs[at - 1]
+      if (next) await selectTab(next.key)
+    }
+    sendTabs()
+    return {}
+  })
+  // the tab closed last comes back and is shown (one whose workflow is gone is skipped)
+  handle('reopenTab', async () => {
+    while (closedOrder.length) {
+      const flow = closedOrder.pop()!
+      if (!closedTabs.delete(flow) || !registry.some(w => w.flow === flow)) continue
+      return selectTab(flow)
+    }
+    return {}
+  })
+  // the companion: the next card of the deck to the top
+  handle('deckNext', async () => {
+    const deck = deckOrder(registry, deckPinned)
+    if (deck.length < 2) return
+    const order = deckOrder(registry, null)
+    const at = order.findIndex(w => w.flow === deck[0]!.flow)
+    deckPinned = order[(at + 1) % order.length]!.flow
+    await readWorkflows()
+    lastCompanion = ''
+    void updateCompanion()
+  }, true)
   handle('showFlow', async (id: unknown) => {
     config.shownFlow = id === null ? null : safeId(id)
     saveConfig()
@@ -728,7 +935,12 @@ function wireIpc() {
     await updateCompanion()
     send('state', await snapshot())
   })
-  handle('companionOpen', async () => openMain(), true)
+  // the window opens on the companion's top card
+  handle('companionOpen', async () => {
+    const top = deckOrder(registry, deckPinned)[0]
+    if (top && !(config.workdir && samePath(top.workdir, config.workdir) && top.flow === latestFlow.flow?.id)) await selectTab(top.flow)
+    openMain()
+  }, true)
   handle('openFolder', async () => {
     if (config.workdir) await shell.openPath(config.workdir)
   })
@@ -766,6 +978,7 @@ function companionHome(height: number) {
 function createCompanion() {
   companion = new BrowserWindow({
     ...companionHome(companionSize().height),
+    icon: ICON,
     frame: false,
     transparent: true,
     resizable: false,
@@ -820,6 +1033,9 @@ let rowCloseAt = 0
 let rowTimer: NodeJS.Timeout | null = null
 const ROW_LINGER_MS = 350
 
+/** The capture holds the row open: no pointer is over the bar while it photographs it. */
+let rowHeld = false
+
 function setRow(open: boolean) {
   if (rowOpen === open) return
   rowOpen = open
@@ -845,7 +1061,7 @@ function watchRow() {
     if (over) {
       rowCloseAt = 0
       setRow(true)
-    } else if (rowOpen) {
+    } else if (rowOpen && !rowHeld) {
       if (!rowCloseAt) rowCloseAt = Date.now() + ROW_LINGER_MS
       else if (Date.now() >= rowCloseAt) {
         rowCloseAt = 0
@@ -865,7 +1081,8 @@ function openMain() {
 /** What the bar needs: the flow (it folds it itself), the look, and Claude's own runs when there is no flow. */
 function companionState() {
   const now = Date.now() / 1000
-  const steps = [...fold(liveFlow.events, now).values()]
+  const shown = companionFlow.workdir === null && config.workdir !== null ? liveFlow : companionFlow.payload
+  const steps = [...fold(shown.events, now).values()]
   const flowBusy = steps.some(step => step.state === 'running' && step.kind !== 'gate' && step.kind !== 'steer')
   const gate = steps.some(step => step.state === 'waiting' && step.kind === 'gate')
   const runs: { who: string; title: string; since: number }[] = []
@@ -875,12 +1092,15 @@ function companionState() {
   }
   const claude = latestClaude
   const claudeBusy = claude !== null && claude.state !== 'idle'
+  // a workflow elsewhere that waits for you, or moved in the last two minutes
+  const elsewhere = deckOrder(registry, null).some(w => w.gate !== null || now - w.t < 120)
   return {
-    busy: flowBusy || gate || runs.length > 0 || claudeBusy,
+    busy: flowBusy || gate || runs.length > 0 || claudeBusy || elsewhere,
     theme: config.theme,
-    flow: liveFlow,
+    flow: shown,
     runs,
     claude,
+    deck: deckInfo(),
   }
 }
 
@@ -930,6 +1150,7 @@ function workdirFromArgs(argv: string[]): string | null {
 
 function createWindow() {
   window = new BrowserWindow({
+    icon: ICON,
     width: 1180,
     height: 780,
     minWidth: 860,
@@ -1008,7 +1229,9 @@ async function shoot() {
       report.clicked = await web.executeJavaScript(`(() => { const b = document.querySelector(${selector}); if (!b) return false; b.click(); return true })()`)
       await wait(1500)
       // the click must have become the review's answer, written by the app
-      const answer = await readFile(join(config.workdir, '.bridge', 'control', `gate-${gate.id}.json`), 'utf8').catch(() => '')
+      // in the flow's own control folder (or the shared one, with no flow)
+      const own = join(config.workdir, '.bridge', 'control', liveFlow.flow?.id ?? '', `gate-${gate.id}.json`)
+      const answer = await readFile(own, 'utf8').catch(() => '')
       report.answered = answer.includes('"by":"you"') && answer.includes('"approve"')
     }
     await wait(2500)
@@ -1028,9 +1251,11 @@ async function shoot() {
     await snapCompanion(`${theme}-companion-c`)
     if (companion) {
       // the row as the pointer on the bar opens it, then shut again
+      rowHeld = true
       setRow(true)
       await wait(700)
       await snapCompanion(`${theme}-companion-open`)
+      rowHeld = false
       setRow(false)
       await wait(600)
     }
@@ -1052,6 +1277,12 @@ if (!app.requestSingleInstanceLock()) {
     }
   })
 
+  // its own name in the taskbar, so Windows shows the app's logo and not Electron's
+  if (process.platform === 'win32') {
+    app.setAppUserModelId('Bridge')
+    // no default menu: its Ctrl+W closed the window, and Ctrl+W closes a tab here
+    Menu.setApplicationMenu(null)
+  }
   void app.whenReady().then(async () => {
     await loadConfig()
     if (!SHOT_DIR) void writeLook()
@@ -1090,9 +1321,13 @@ if (!app.requestSingleInstanceLock()) {
     isLeaving = true
     if (sweepTimer) clearInterval(sweepTimer)
     for (const one of watchers) one.close()
-    if (!running.size) return
     event.preventDefault()
+    const release = Promise.all(registry.map(w => queuePause(w.workdir, w.flow, false).catch(() => undefined)))
+    if (!running.size) {
+      void Promise.race([release, new Promise(done => setTimeout(done, 3000))]).then(() => app.quit())
+      return
+    }
     const stops = [...running.values()].map(({ handle: run }) => run.stop().catch(() => undefined))
-    void Promise.race([Promise.all(stops), new Promise(done => setTimeout(done, 8000))]).then(() => app.quit())
+    void Promise.race([Promise.all([...stops, release]), new Promise(done => setTimeout(done, 8000))]).then(() => app.quit())
   })
 }

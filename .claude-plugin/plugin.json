@@ -1,6 +1,6 @@
 {
   "name": "codex-bridge",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Hand routine work from Claude Code to OpenAI Codex on your ChatGPT plan, get a second plan from Gemini, share one project between Claude, Codex and Gemini, and talk to them in a console beside the chat",
   "author": { "name": "Flzsh" },
   "homepage": "https://github.com/Flzsh/claude-codex-bridge",

@@ -32,14 +32,31 @@ export type Settings = {
   delivery: { route: 'claude-start' | 'claude-next-step'; at: number; state: 'waiting' | 'read' | 'nobody' } | null
   /** A Claude Code session with the plugin is open in this folder. */
   claudeHere: boolean
+  /** That session is at work (thinking or using a tool). */
+  claudeBusy?: boolean
 }
 export type RunDetail = { brief: string; reply: string; logTail: string }
+
+/** A tab: one workflow, in whatever folder it runs, or this folder when nothing of it runs. */
+export type TabInfo = {
+  key: string
+  flow: string | null
+  workdir: string
+  title: string
+  folder: string
+  mark: 'work' | 'wait' | 'pause' | 'done' | 'quiet' | 'idle'
+  active: boolean
+}
 
 /** The window's door to the main process (preload.ts). */
 export type BridgeApi = {
   state(): Promise<Settings>
   flow(): Promise<FlowPayload>
-  on(event: 'state' | 'flow', listener: (payload: unknown) => void): () => void
+  on(event: 'state' | 'flow' | 'tabs', listener: (payload: unknown) => void): () => void
+  tabs(): Promise<TabInfo[]>
+  selectTab(key: string): Promise<{ error?: string }>
+  closeTab(key: string): Promise<unknown>
+  reopenTab(): Promise<{ error?: string }>
   answerGate(gate: string, answer: GateAnswer, text?: string, t0?: number): Promise<{ ok?: boolean; taken?: boolean; error?: string }>
   setPaused(paused: boolean): Promise<{ ok?: boolean; error?: string }>
   steer(text: string): Promise<{ ok?: boolean; error?: string; route?: string }>
@@ -82,7 +99,10 @@ export function deliveryWords(d: NonNullable<Settings['delivery']>): string {
 }
 
 export class Flow {
+  /** The flow's events, with Claude's working step added while it works between steps. */
   events: FlowEvent[] = []
+  /** The flow's events as the file has them. */
+  private raw: FlowEvent[] = []
   info: FlowInfo | null = null
   flows: FlowInfo[] = []
   paused = false
@@ -103,6 +123,8 @@ export class Flow {
   private folds = new Map<number, { steps: Map<string, Step>; focus: { id: string | null; since: number } }>()
   private foldsFor: FlowEvent[] = []
   input = ''
+  /** The window's tabs, in order. */
+  tabs: TabInfo[] = []
   notice: { text: string; at: number } | null = null
   private runs = new Map<string, RunDetail | 'loading'>()
   private listeners = new Set<() => void>()
@@ -113,14 +135,52 @@ export class Flow {
     this.api.on('state', payload => {
       const before = this.settings?.delivery
       this.settings = payload as Settings
+      this.events = this.withClaude()
       const d = this.settings.delivery
       // a message's fate, said once when it changes
       if (d && before && d.at === before.at && d.state !== before.state) this.say(deliveryWords(d))
       this.changed()
     })
     this.api.on('flow', payload => this.takeFlow(payload as FlowPayload))
+    this.api.on('tabs', payload => {
+      this.tabs = payload as TabInfo[]
+      this.changed()
+    })
+    this.tabs = await this.api.tabs().catch(() => [])
     this.settings = await this.api.state()
     this.takeFlow(await this.api.flow())
+  }
+
+  /** Points the window at a tab. */
+  selectTab(key: string) {
+    void this.api.selectTab(key).then(result => {
+      if (result?.error) this.say(result.error)
+    })
+  }
+
+  closeTab(key: string) {
+    void this.api.closeTab(key)
+  }
+
+  /** The tab closed last, back (Ctrl+Shift+T). */
+  reopenTab() {
+    void this.api.reopenTab().then(result => {
+      if (result?.error) this.say(result.error)
+    })
+  }
+
+  /** The tab `step` places from the one shown (Ctrl+Tab, Ctrl+Shift+Tab), round the ends. */
+  nextTab(step: number) {
+    const count = this.tabs.length
+    if (count < 2) return
+    const at = Math.max(0, this.tabs.findIndex(tab => tab.active))
+    this.selectTab(this.tabs[(at + step + count) % count]!.key)
+  }
+
+  /** The tab at a place, 0 first (Ctrl+1..8); Ctrl+9 is the last, as in a browser. */
+  tabAt(index: number) {
+    const tab = index === 8 ? this.tabs[this.tabs.length - 1] : this.tabs[index]
+    if (tab) this.selectTab(tab.key)
   }
 
   onChange(listener: () => void) {
@@ -134,12 +194,30 @@ export class Flow {
 
   private takeFlow(payload: FlowPayload) {
     const before = this.info?.id
-    this.events = payload.events
+    this.raw = payload.events
     this.info = payload.flow
     this.flows = payload.flows
     this.paused = payload.paused
+    this.events = this.withClaude()
     if (before !== this.info?.id) { this.pinned = null; this.choice = -1 }
     this.changed()
+  }
+
+  /**
+   * Between steps, while Claude works and nothing else runs, the flow ends in a working step of
+   * Claude's own, so the window never stands still while Claude does. It starts at the last
+   * event, so its motion does not restart while it lasts; the next real step takes its place.
+   */
+  private withClaude(): FlowEvent[] {
+    const raw = this.raw
+    if (!this.settings?.claudeBusy || this.paused || !this.info || this.info.state === 'done' || !raw.length) return raw
+    const at = now()
+    for (const step of fold(raw, at).values()) if (step.state === 'running' || step.state === 'waiting') return raw
+    const last = [...raw].reverse().find(e => typeof e.id === 'string' && typeof e.lane === 'string' && e.kind !== 'steer')
+    const phase = [...raw].reverse().find(e => typeof e.phase === 'number')?.phase
+    const t = (raw[raw.length - 1]?.t ?? at) + 0.001
+    const working: FlowEvent = { t, flow: this.info.id, id: '~claude', lane: 'claude', kind: 'step', state: 'running', title: 'working on the next step', ...(last?.id ? { after: [last.id] } : {}), ...(typeof phase === 'number' ? { phase } : {}) }
+    return [...raw, working]
   }
 
   /** The steps as they stand at t, reused while no new event has happened. */

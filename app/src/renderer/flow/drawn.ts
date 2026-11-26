@@ -7,6 +7,7 @@
 import { stagesFor, type Size } from '../../../../core/console'
 import { fold, LANE, LANES, type Lane, type Step } from '../../../../core/flow'
 import { gateLeft, gateOptions, type Flow, type Frame, type Pane } from './controller'
+import { TabStrip, tabKey } from './tabs'
 import {
   cap, CLAY_UI, clamp, clockSvg, DEEP, ease, easeInOut, elapsed, esc, faceSvg, failSvg, FILL, frame, linePath, loopSvg,
   meterSvg, NAME, NS, place, seedFrom, setFrame, setWorking, sizeFrame, tickSvg, took, wipe, INK, type Fill, type Frame as InkFrame,
@@ -93,15 +94,22 @@ export class DrawnView {
   private sheetW = 372
   private headW = 186
   private readonly off: (() => void)[] = []
+  /** The workflows' tabs, in the top bar. */
+  private readonly tabStrip: TabStrip
 
   constructor(private readonly root: HTMLElement, private readonly flow: Flow) {
     root.classList.add('theme-drawn')
     this.page = div('drawn-page')
     const top = div('d-top', `<span class="d-brand"><span class="d-mark">${faceSvg('mark', 26)}</span>Bridge</span>`)
+    // the workflows' tabs, after the name (the shown tab says the workflow's title)
+    const tabHost = div('d-flowtabs', '')
+    top.append(tabHost)
+    this.tabStrip = new TabStrip(tabHost, flow, 'drawn')
     const tag = (key: string, cls = 'd-tag'): Tag => {
       // only the tags that do something are buttons
       const el = document.createElement(key === 'pause' || key === 'theme' || key === 'status' ? 'button' : 'span')
       el.className = cls
+      el.dataset.key = key
       const text = document.createElement('span')
       text.className = 'wipe'
       el.append(text)
@@ -157,6 +165,7 @@ export class DrawnView {
 
   destroy() {
     for (const off of this.off) off()
+    this.tabStrip.destroy()
     this.root.classList.remove('theme-drawn')
     this.page.remove()
   }
@@ -301,6 +310,7 @@ export class DrawnView {
     on(this.input, 'input', () => flow.typed(this.input.value, flow.frame().gate))
     // the shortcuts work wherever the focus is
     on(window, 'keydown', event => {
+      if (tabKey(event, flow)) return
       const ctrl = event.ctrlKey || event.metaKey
       if (ctrl && event.key.toLowerCase() === 'p') { event.preventDefault(); void flow.togglePause() }
       else if (ctrl && event.key.toLowerCase() === 't') { event.preventDefault(); void flow.setTheme('cli') }
@@ -312,7 +322,8 @@ export class DrawnView {
       }
     })
     on(this.input, 'keydown', event => {
-      if (event.key === 'Tab') { event.preventDefault(); flow.cycleTarget(); this.input.value = flow.input }
+      // Ctrl+Tab picks a tab (the window's handler); Tab alone picks who the box goes to
+      if (event.key === 'Tab' && !(event.ctrlKey || event.metaKey)) { event.preventDefault(); flow.cycleTarget(); this.input.value = flow.input }
       else if (event.key === 'Enter') { event.preventDefault(); this.send(flow.frame()) }
     })
     on(this.live, 'click', () => flow.select(null))
@@ -389,6 +400,9 @@ export class DrawnView {
     const flow = this.flow
     const frame = flow.frame()
     const t = frame.now
+    this.tabStrip.render(t)
+    // with several tabs, the tabs say who works: the top bar gives them the room of its own status and look tags
+    this.root.classList.toggle('has-tabs', flow.tabs.length > 1)
     const steps = frame.steps
     const box = this.placeAll(steps, t)
     const target = this.scrollAt(t)

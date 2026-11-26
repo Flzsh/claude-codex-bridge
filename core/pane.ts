@@ -49,6 +49,17 @@ export type PaneModel = {
   /** Steps left out at the top, when the flow is long. */
   earlier: number
   detail: PaneDetail | null
+  /** The line into each working step, as [row, column] cells from where it starts: the liquid runs down it. */
+  flows: PaneFlow[]
+}
+
+export type PaneFlow = { lane: Lane; cells: [row: number, x: number][] }
+
+/** The flows when the first `cut` rows are left out. */
+function dropRows(flows: PaneFlow[], cut: number): PaneFlow[] {
+  return flows
+    .map(one => ({ ...one, cells: one.cells.filter(([row]) => row >= cut).map(([row, x]): [number, number] => [row - cut, x]) }))
+    .filter(one => one.cells.length > 1)
 }
 
 const MAX_ROWS = 48
@@ -58,7 +69,9 @@ const GATE_LINES = 18
 const duration = (s: number) => (s < 60 ? `${Math.max(1, Math.round(s))}s` : s < 3600 ? `${Math.round(s / 60)}m` : `${(s / 3600).toFixed(1)}h`)
 
 /** The pane's model of the flow, or null when there is none worth showing. */
-export function paneModel(events: readonly FlowEvent[], head: FlowHead | null, paused: boolean, at: number): PaneModel | null {
+/** `busy`: Claude is at work. Between steps, when no step runs, the flow then ends in a row of
+ * Claude working, so the picture never stands still while Claude does. */
+export function paneModel(events: readonly FlowEvent[], head: FlowHead | null, paused: boolean, at: number, busy = false): PaneModel | null {
   const view = sidebarView(events, head, paused, at)
   if (!view || !head) return null
   const steps = fold(events, at)
@@ -102,12 +115,20 @@ export function paneModel(events: readonly FlowEvent[], head: FlowHead | null, p
     // a review's prompt and count rows keep only their lines: its answers are the pane's
     // buttons, and its time is in the focus box
   }
+  // Claude at work between steps: a row of its own at the end, working
+  if (busy && !paused && !view.finished && !rows.some(r => r.kind === 'step' && (r.state === 'running' || r.state === 'waiting')))
+    rows.push({ kind: 'step', id: '~claude', lane: 'claude', title: 'working on the next step', state: 'running', gate: false, steer: false, right: '', focus: false, meter: null, cells: [] })
+  // the line into each working step (a row per layout line, so its cells name rows)
+  let flows: PaneFlow[] = [...steps.values()]
+    .filter(st => st.state === 'running' && st.path && st.path.length > 1)
+    .map(st => ({ lane: st.lane, cells: st.path!.map(([line, x]): [number, number] => [line, x]) }))
   // a long flow keeps its newest rows
   let earlier = 0
   if (rows.length > MAX_ROWS) {
     const cut = rows.length - MAX_ROWS
     earlier = rows.slice(0, cut).filter(r => r.kind === 'step').length
     rows = rows.slice(cut)
+    flows = dropRows(flows, cut)
   }
   const end = [...events].reverse().find(e => e.kind === 'flow' && e.state === 'done')
   const step = focus ? steps.get(focus) : undefined
@@ -123,6 +144,7 @@ export function paneModel(events: readonly FlowEvent[], head: FlowHead | null, p
     rows,
     earlier,
     detail: step ? detailOf(step) : null,
+    flows,
   }
 }
 
@@ -211,6 +233,8 @@ type Skin = {
   focusRow: (x: number, y: number, w: number, h: number, lane: Lane, gate: boolean, key: string) => string
   /** A bar that loads under a working step. */
   loading: (x: number, y: number, w: number, lane: Lane, meter: [number, number] | null, key: string) => string
+  /** Liquid running along a line (points from where it starts to the step it feeds). */
+  liquid: (points: [number, number][], lane: Lane, key: string) => string
   /** The line from the first step to the step now, lit, with a light running along it. */
   sweep: (x1: number, y: number, x2: number, colour: string, run: boolean, key: string) => string
   /** The focus box, drawn under its content. */
@@ -279,6 +303,12 @@ const cli: Skin = {
     return out
   },
   pulse: (x, y, colour) => `<circle cx="${f(x)}" cy="${f(y)}" r="3" fill="${colour}"><animate attributeName="opacity" values="1;.25;1" dur="1.2s" repeatCount="indefinite"/></circle>`,
+  // a lit pipe, and the agent's colour running down it toward the step
+  liquid: (points, lane) => {
+    const d = polyline(points)
+    return `<path d="${d}" fill="none" stroke="${C[lane]}" stroke-opacity=".26" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>`
+      + `<path d="${d}" fill="none" stroke="${C[lane]}" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="14 5 3 5"><animate attributeName="stroke-dashoffset" from="27" to="0" dur=".9s" repeatCount="indefinite"/></path>`
+  },
 }
 
 const PAPER = '#fffdf8', INK2 = '#4a4741', INK3 = '#6b675f'
@@ -364,19 +394,30 @@ const drawn: Skin = {
     return out
   },
   pulse: (x, y) => `<circle cx="${f(x)}" cy="${f(y)}" r="3.2" fill="${FILL.clay}" stroke="${INK}" stroke-width=".9"><animate attributeName="r" values="3.2;2.2;3.2" dur="1.2s" repeatCount="indefinite"/></circle>`,
+  // a wash in the agent's colour along the line, and ink running down it toward the step
+  liquid: (points, lane) => {
+    const d = polyline(points)
+    return `<path d="${d}" fill="none" stroke="${FILL[lane]}" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>`
+      + `<path d="${d}" fill="none" stroke="${DEEP[lane]}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="13 5 3 6"><animate attributeName="stroke-dashoffset" from="27" to="0" dur="1s" repeatCount="indefinite"/></path>`
+  },
 }
 
 /** About how wide one of the pane's cells is, in px. A little over, so the picture is never
  * narrower than the pane: one wider than its room is shrunk to it, whole. */
-const CELL_PX = 8
-const NARROWEST = 240
+// A little under: the picture moves only in its own frame, and a frame wider than its room is
+// narrowed while keeping its height, which shrinks the drawing inside it with blank bands. So
+// it is laid out no wider than the pane, and the pane's ground fills what is left beside it.
+const CELL_PX = 7
+/** The least a picture is laid out at, for a very narrow pane. */
+const SMALLEST = 200
 const WIDEST = 620
 
-/** How wide to lay the picture out for a pane `columns` cells across (0: not known yet).
- * In steps of 20 px, so a small drag of the pane's edge does not restart the motion. */
+/** How wide to lay the picture out for a pane `columns` cells across (0: not known yet): no
+ * wider than the pane. In steps of 20 px, rounded down, so a small drag of the pane's edge
+ * does not restart the motion. */
 export function pictureWidth(columns: number): number {
   if (!(columns > 0)) return PANE_W
-  return Math.round(Math.min(WIDEST, Math.max(NARROWEST, columns * CELL_PX)) / 20) * 20
+  return Math.floor(Math.min(WIDEST, Math.max(SMALLEST, columns * CELL_PX - 4)) / 20) * 20
 }
 
 /** How a picture is set: framed on its own ground, or bare, its frame and ground left to the
@@ -413,12 +454,12 @@ export const PANE_THEME: Record<Look, PaneTheme> = {
 /** The workflow on top, the step in focus below, in the app's look, laid out `width` px wide. */
 export function paneSvg(m: PaneModel, look: Look, at: number, width: number = PANE_W, setting: Setting = 'framed'): string {
   const skin = look === 'drawn' ? drawn : cli
-  const W = Math.max(NARROWEST, Math.round(width))
+  const W = Math.max(SMALLEST, Math.round(width))
   let svg = draw(m, skin, at, W, setting)
   // a very long flow keeps fewer rows rather than lose the picture
   for (let keep = MAX_ROWS / 2; svg.length > SOURCE_LIMIT && keep >= 6; keep = Math.floor(keep / 2)) {
     const cut = Math.max(0, m.rows.length - keep)
-    svg = draw({ ...m, rows: m.rows.slice(cut), earlier: m.earlier + m.rows.slice(0, cut).filter(r => r.kind === 'step').length }, skin, at, W, setting)
+    svg = draw({ ...m, rows: m.rows.slice(cut), earlier: m.earlier + m.rows.slice(0, cut).filter(r => r.kind === 'step').length, flows: dropRows(m.flows, cut) }, skin, at, W, setting)
   }
   return svg
 }
@@ -437,6 +478,22 @@ function laneNames(skin: Skin, W: number, y: number, text: (x: number, y: number
     lx += nameW(name) + 14
   })
   return { svg, rows: oneLine ? 1 : 2 }
+}
+
+/** A path through the points, each end drawn back by `trim` so it stops at the nodes' edges. */
+function polyline(points: [number, number][], trim = 6): string {
+  const pts = points.filter((pt, i) => i === 0 || pt[0] !== points[i - 1]![0] || pt[1] !== points[i - 1]![1]).map(pt => [...pt] as [number, number])
+  const pull = (a: [number, number], b: [number, number]) => {
+    const len = Math.hypot(b[0] - a[0], b[1] - a[1])
+    if (len <= trim) return
+    a[0] += ((b[0] - a[0]) / len) * trim
+    a[1] += ((b[1] - a[1]) / len) * trim
+  }
+  if (pts.length > 1) {
+    pull(pts[0]!, pts[1]!)
+    pull(pts[pts.length - 1]!, pts[pts.length - 2]!)
+  }
+  return pts.map(([x, y], i) => `${i ? 'L' : 'M'}${f(x)} ${f(y)}`).join(' ')
 }
 
 function gateLeft(d: PaneDetail, paused: boolean, at: number): number | null {
@@ -519,9 +576,11 @@ function draw(m: PaneModel, skin: Skin, at: number, W: number, setting: Setting)
     body += t(TX, y + 12, `… ${m.earlier} earlier step${m.earlier === 1 ? '' : 's'}`, skin.faint, sz.small, italic)
     y += 18
   }
+  const middles: number[] = []
   m.rows.forEach((row, i) => {
     const h = HEIGHTS[row.kind]
     const cy = y + h / 2
+    middles[i] = cy
     // the lines between the steps, in the lane colour of where they come from
     for (const c of row.cells) {
       const x = GX + c.x * CW
@@ -560,6 +619,13 @@ function draw(m: PaneModel, skin: Skin, at: number, W: number, setting: Setting)
     }
     y += h
   })
+  // the liquid running down the line into each working step (paused: it stands still)
+  if (!m.paused && !m.finished) {
+    for (const [k, one] of m.flows.entries()) {
+      const points = one.cells.flatMap(([row, x]): [number, number][] => (middles[row] === undefined ? [] : [[GX + x * CW, middles[row]!]]))
+      if (points.length > 1) body += skin.liquid(points, one.lane, `flow${k}`)
+    }
+  }
   y += 8
 
   // the step in focus: what it is doing, or what the review asks
@@ -720,7 +786,7 @@ export function lastFlow(events: readonly FlowEvent[], id: string | null, at: nu
 
 /** The shape of a workflow before one runs, in the order it goes: who does what. */
 const SHAPE: [Lane, string, string][] = [
-  ['you', 'you say what it should do', 'in the chat; bigger work shows here'],
+  ['you', 'you say what it should do', 'in the chat; workflows show here'],
   ['claude', 'claude sizes it and plans it', 'small, medium or large'],
   ['gemini', 'gemini writes a second plan', 'for large work, before you decide'],
   ['codex', 'codex builds, claude joins in', 'each step shows here as it works'],
@@ -736,7 +802,7 @@ export const EMPTY_W = 400
 
 /** How wide the empty picture is laid out, to be drawn `drawnWidth` px wide. */
 export function emptyLayoutWidth(drawnWidth: number): number {
-  return Math.round(Math.max(drawnWidth / EMPTY_SCALE, Math.min(drawnWidth, 300), NARROWEST))
+  return Math.round(Math.max(drawnWidth / EMPTY_SCALE, Math.min(drawnWidth, 300), SMALLEST))
 }
 
 /** One line for a reader that cannot see the picture, and for the terminal. */
@@ -750,7 +816,7 @@ export function emptySvg(m: EmptyModel, look: Look, width: number = PANE_W, sett
   const skin = look === 'drawn' ? drawn : cli
   // laid out narrower than it is drawn, so it comes out larger (the pane never enlarges a
   // picture itself)
-  const drawnW = Math.max(NARROWEST, Math.round(width))
+  const drawnW = Math.max(SMALLEST, Math.round(width))
   const W = emptyLayoutWidth(drawnW)
   const sz = skin.size
   const t = (x: number, y: number, text: string, colour: string, size: number = sz.text, extra = '') =>

@@ -165,3 +165,38 @@ html[data-theme='cli'] .titlebar { background: var(--term-bar); }
 .d-input { flex: 1; min-width: 0; border: 0; outline: none; background: transparent; font: 400 15px/1.2 var(--sans); color: var(--ink); }
 .d-input::placeholder { color: var(--ink-3); font: italic 400 15px/1.2 var(--serif); }
 .d-send { position: relative; width: 38px; height: 34px; display: grid; place-items: center; }
+
+/* ---------------------------------------------------------------- tabs: one per workflow, like a browser's */
+.tabs { display: flex; align-items: flex-end; gap: 2px; min-width: 0; overflow: hidden; }
+.tab { -webkit-app-region: no-drag; position: relative; z-index: 1; display: flex; align-items: center; gap: 6px; min-width: 0; flex: 0 1 260px; cursor: pointer; white-space: nowrap; }
+.tab .tt { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.tab .n, .tab .mk, .tab .fd { flex: none; }
+.tab .x { flex: none; visibility: hidden; padding: 0 2px; }
+.tab:hover .x, .tab.on .x { visibility: visible; }
+@keyframes tab-blink { 50% { opacity: .3; } }
+.tab.m-wait .mk { animation: tab-blink 1.2s ease-in-out infinite; }
+
+/* the terminal look: in the title bar; the tab shown joins the screen below, lit underneath */
+.tabs-cli { position: absolute; left: 8px; right: 150px; bottom: 0; height: 34px; }
+.tabs-cli .tab { height: 28px; padding: 0 10px; font: 12px var(--mono); color: #8b857a; border-bottom: 2px solid transparent; }
+.tabs-cli .tab .n, .tabs-cli .tab .fd, .tabs-cli .tab .x { color: #56524b; }
+.tabs-cli .tab:hover { color: #d4cec2; }
+.tabs-cli .tab.on { background: var(--term); color: #f3eee4; border-bottom-color: #d9825b; }
+.tabs-cli .tab.m-wait:not(.on) { color: #c9a25a; }
+.tabs-cli .tab .x:hover { color: #df6b5e; }
+
+/* the drawn look: paper tabs after the name; the tab shown is the page's own paper */
+.d-flowtabs { flex: 1 1 auto; min-width: 0; align-self: flex-end; height: 34px; display: flex; }
+.d-top .d-task { display: none; }
+.tabs-drawn { flex: 1; height: 34px; padding-left: 4px; }
+.tabs-drawn .tab { height: 30px; min-width: 130px; padding: 0 12px 2px 14px; margin-right: -6px; font: 13px var(--serif); color: var(--ink); }
+.tabs-drawn .tab .paper { position: absolute; inset: 0; width: 100%; height: 100%; z-index: -1; }
+.tabs-drawn .tab.on { z-index: 3; }
+.tabs-drawn .tab .fd { font-style: italic; color: var(--ink-3); }
+.tabs-drawn .tab .mk { color: #b8643f; }
+.tabs-drawn .tab.m-wait .mk { color: #a86f14; }
+.tabs-drawn .tab.m-done .mk { color: #5f6f45; }
+.tabs-drawn .tab.m-quiet, .tabs-drawn .tab.m-idle { color: var(--ink-2); }
+.tabs-drawn .tab .x { color: var(--ink-3); }
+.tabs-drawn .tab .x:hover { color: var(--clay-ui); }
+.theme-drawn.has-tabs .d-top [data-key="status"], .theme-drawn.has-tabs .d-top [data-key="theme"] { display: none !important; }

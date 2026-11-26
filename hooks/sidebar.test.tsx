@@ -61,16 +61,15 @@ test('a review: the picture on surfaces that draw one, its words on the terminal
   on('state.get', stored({ ...base, gate: { id: 'g1', title: 'Review the plan', noAuto: false } }))
   const desktop = await $.ui.mount({ ...PANE, surface: 'desktop' })
   const picture = await desktop.find({ type: 'Svg' })
-  // an image given its width alone: a narrower pane shrinks it whole, its height following
-  // (a frame kept its given height, and a narrow pane left blank bands above and below)
-  expect(picture?.props.isInteractive).toBe(undefined)
-  // up to a fifth wider than laid out (340), so it fills the pane even where a cell is wider than guessed
-  expect([picture?.props.width, picture?.props.height]).toEqual([408, undefined])
+  // in its interactive frame, where the desktop runs its motion (as an image it stands still),
+  // its size given outright (else the frame is 150 px tall and the drawing shrinks into it)
+  expect(picture?.props.isInteractive).toBe(true)
+  expect([picture?.props.width, picture?.props.height]).toEqual([340, 120])
   expect(await desktop.find({ type: 'Button', key: 'gate-approve' })).not.toBe(undefined)
   expect(await desktop.find({ type: 'Button', key: 'gate-pause' })).not.toBe(undefined)
   expect(await desktop.find({ type: 'Button', key: 'gate-decline' })).not.toBe(undefined)
   // a change to the review is asked for in the chat
-  expect((await desktop.find({ type: 'Text', text: /say it in the chat/ }))?.text).toContain('carries on when the time runs out')
+  expect((await desktop.find({ type: 'Text', text: /Ask for changes in the chat/ }))?.text).toContain('carries on when the time runs out')
   // drawn as coloured words in the look, not the app's grey buttons
   expect((await desktop.find({ type: 'Button', key: 'gate-approve' }))?.props.plain).toBe(true)
   // the picture says whose turn it is; the edge of the pane turns amber
@@ -130,7 +129,7 @@ for (const look of ['cli', 'drawn'] as const) {
 test('mid-workflow: steering is said in the chat; a note left from the app still shows', async ($, on) => {
   on('state.get', stored({ ...base, notes: { waiting: 1, readAt: null } }))
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
-  expect((await ui.find({ type: 'Text', text: /^Running/ }))?.text).toBe('Running. To steer it, say so in the chat.')
+  expect((await ui.find({ type: 'Text', text: /^Running/ }))?.text).toBe('Running. To steer it, tell Claude in the chat.')
   expect(await ui.find({ type: 'Button', key: 'flow-pause' })).not.toBe(undefined)
   expect((await ui.find({ type: 'Text', text: /waits for Claude/ }))?.text).toBe("◐ Your note waits for Claude's next step")
   expect((await ui.find({ type: 'Text', text: /^Claude now/ }))?.text).toBe('Claude now: editing main.ts')

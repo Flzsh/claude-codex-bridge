@@ -8,6 +8,7 @@
 import { stagesFor, type Size } from '../../../../core/console'
 import { graphCell, layout, LANE, LANES, GAP, type Lane, type Step } from '../../../../core/flow'
 import { gateLeft, gateOptions, type Flow, type Frame, type Pane } from './controller'
+import { TabStrip, tabKey } from './tabs'
 import { JOIN, Term } from './term'
 import { C, clock, EIGHTHS, elapsed, fit, LINE, mix, shimmer, spin, took } from './termkit'
 
@@ -38,9 +39,12 @@ export class CliView {
   private graph: Graph | null = null
   private graphFor: Map<string, Step> | null = null
   private readonly off: (() => void)[] = []
+  /** The workflows' tabs, in the title bar. */
+  private readonly tabs: TabStrip
 
   constructor(private readonly root: HTMLElement, private readonly flow: Flow) {
     root.classList.add('theme-cli')
+    this.tabs = new TabStrip(document.querySelector('.titlebar') as HTMLElement, flow, 'cli')
     this.canvas = document.createElement('canvas')
     this.canvas.className = 'cli-screen'
     // The steer box's real text field: invisible, kept over the drawn box so typing and IME work.
@@ -57,6 +61,7 @@ export class CliView {
 
   destroy() {
     for (const off of this.off) off()
+    this.tabs.destroy()
     this.root.classList.remove('theme-cli')
     this.canvas.remove()
     this.field.remove()
@@ -100,10 +105,11 @@ export class CliView {
     const gate = frame.gate
     const empty = flow.input.trim() === ''
     const ctrl = event.ctrlKey || event.metaKey
+    if (tabKey(event, flow)) return
     if (ctrl && event.key.toLowerCase() === 'p') { event.preventDefault(); void flow.togglePause(); return }
     if (ctrl && event.key.toLowerCase() === 't') { event.preventDefault(); void flow.setTheme('drawn'); return }
     if (ctrl && event.key === ',') { event.preventDefault(); flow.setPane('settings'); return }
-    if ((ctrl || event.altKey) && /^[0-4]$/.test(event.key)) { event.preventDefault(); flow.setPane(WINDOWS[Number(event.key)]!.pane); return }
+    if (event.altKey && /^[0-4]$/.test(event.key)) { event.preventDefault(); flow.setPane(WINDOWS[Number(event.key)]!.pane); return }
     if (event.key === 'Tab') { event.preventDefault(); flow.cycleTarget(); this.field.value = flow.input; return }
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault()
@@ -154,6 +160,7 @@ export class CliView {
     const frame = flow.frame()
     const { cols, rows } = term
     const t = frame.now
+    this.tabs.render(t)
     const DW = cols >= 120 ? Math.max(42, Math.min(76, Math.round(cols * 0.36))) : Math.max(34, Math.round(cols * 0.4))
     const W1 = cols - DW
     const paneBottom = rows - 6

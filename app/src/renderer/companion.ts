@@ -10,15 +10,18 @@ import { stagesFor, type Size } from '../../../core/console'
 import { fold, LANE, type Lane, type Step } from '../../../core/flow'
 import { gateLeft, type FlowPayload, type Theme } from './flow/controller'
 import { boxPath, CLAY_UI, clamp, DEEP, esc, FILL, HATCH, INK, j, seedFrom } from './flow/ink'
-import { C, mix, spin } from './flow/termkit'
+import { C, mix, spin, SPIN } from './flow/termkit'
 
 type Claude = { state: 'thinking' | 'tool' | 'idle'; detail: string; since: number; t: number } | null
-type State = { visible: boolean; busy: boolean; theme: Theme; flow: FlowPayload; runs: { who: string; title: string; since: number }[]; claude: Claude }
+/** Two or more workflows at once: how many, the cards behind the top one, and where the top one runs. */
+type Deck = { count: number; behind: { wait: boolean }[]; folder: string; title: string } | null
+type State = { visible: boolean; busy: boolean; theme: Theme; flow: FlowPayload; runs: { who: string; title: string; since: number }[]; claude: Claude; deck?: Deck }
 type Companion = {
   on(event: 'companion' | 'companion-row', listener: (payload: unknown) => void): () => void
   companionOpen(): Promise<void>
   answerGate(gate: string, answer: string, text?: string, t0?: number): Promise<unknown>
-  setPaused(paused: boolean): Promise<unknown>
+  setPaused(paused: boolean, flow?: string): Promise<unknown>
+  deckNext(): Promise<unknown>
 }
 
 const bridge = (window as unknown as { bridge: Companion }).bridge
@@ -95,9 +98,11 @@ function loopFor(at: number, s: ReturnType<typeof situation>, line: Line) {
   return { nodes, lane, busy: Boolean(s.working.length || g), left }
 }
 
-function act(kind: 'approve' | 'pause' | 'open' | 'decline', gate: Step | null) {
-  if (kind === 'open') void bridge.companionOpen()
-  else if (kind === 'pause') void bridge.setPaused(!(state?.flow.paused ?? false))
+function act(kind: 'approve' | 'pause' | 'open' | 'decline' | 'next', gate: Step | null) {
+  if (kind === 'next') void bridge.deckNext()
+  else if (kind === 'open') void bridge.companionOpen()
+  // names the flow it pauses: a card that changed under the press is left alone
+  else if (kind === 'pause') void bridge.setPaused(!(state?.flow.paused ?? false), state?.flow.flow?.id ?? undefined)
   else if (gate) void bridge.answerGate(gate.id, kind, undefined, gate.t0)
 }
 
@@ -141,6 +146,19 @@ function drawCli(at: number) {
     ctx.strokeStyle = gate ? mix(C.amber, C.bg, 0.35) : C.rule
     ctx.lineWidth = 1
     ctx.stroke()
+  }
+  // the deck: the cards behind peek above the top one, the nearest last
+  const deck = state?.deck ?? null
+  if (deck) {
+    deck.behind.slice(0, 2).map((card, k) => ({ card, k: k + 1 })).reverse().forEach(({ card, k }) => {
+      ctx.beginPath()
+      ctx.roundRect(5 * k + 0.5, top - 4 * k + 0.5, TILE - 10 * k - 1, 14, 6)
+      ctx.fillStyle = C.bg
+      ctx.fill()
+      ctx.strokeStyle = card.wait ? mix(C.amber, C.bg, 0.25) : C.rule
+      ctx.lineWidth = 1
+      ctx.stroke()
+    })
   }
   box(0, top, TILE, TILE)
 
@@ -226,6 +244,23 @@ function drawCli(at: number) {
     })
   }
 
+  if (deck) {
+    const label = `1/${deck.count} ▸`
+    ctx.font = `bold 9px ${MONO}`
+    const bw = ctx.measureText(label).width + 8, bx = TILE - bw - 2, by = top - 6
+    ctx.beginPath()
+    ctx.roundRect(bx + 0.5, by + 0.5, bw, 12, 5)
+    ctx.fillStyle = C.bar
+    ctx.fill()
+    ctx.strokeStyle = deck.behind.some(one => one.wait) ? C.amber : C.rule
+    ctx.stroke()
+    ctx.fillStyle = C.fg
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.fillText(label, bx + bw / 2 + 0.5, by + 6.5)
+    hots.push({ x: bx - 2, y: by - 2, w: bw + 4, h: 16, run: () => act('next', null) })
+  }
+
   // inside the track: who near its top, what in small type below, and which step of how many
   // near its bottom. With no workflow (Claude on its own) there is no count and no step marks
   // on the sides, only one small square going round, so the words get that room: wider lines,
@@ -243,7 +278,21 @@ function drawCli(at: number) {
   const BOLD = `bold 10.5px ${MONO}`, SMALL = `9px ${MONO}`, FOOT = `bold 9.5px ${MONO}`
   ctx.font = BOLD
   ctx.fillStyle = gate ? C.amber : line.tone === 'work' ? lane : C.dim
-  ctx.fillText(fitText(`${line.tone === 'work' ? spin(loop.lane, at) + ' ' : ''}${gate ? 'review' : loop.lane}`), cx, sy + (alone ? 13 : 17))
+  const whoY = sy + (alone ? 13 : 17)
+  const who = gate ? 'review' : loop.lane
+  if (line.tone === 'work') {
+    // The star changes shape every frame, and its shapes differ in width: it sits in a slot as
+    // wide as its widest shape, and the name beside it stays where it is.
+    const slot = Math.max(...SPIN[loop.lane].frames.map(frame => ctx.measureText(frame).width))
+    const gap = ctx.measureText(' ').width
+    let name = who
+    while (name.length > 1 && slot + gap + ctx.measureText(name).width > room) name = name.slice(0, -2) + '…'
+    const left = cx - (slot + gap + ctx.measureText(name).width) / 2
+    ctx.fillText(spin(loop.lane, at), left + slot / 2, whoY)
+    ctx.textAlign = 'left'
+    ctx.fillText(name, left + slot + gap, whoY)
+    ctx.textAlign = 'center'
+  } else ctx.fillText(fitText(who), cx, whoY)
 
   // which step of how many, with the review's seconds or the step's count beside it when they fit
   const count = s.live && s.phase >= 0 ? `${s.phase + 1}/${s.phases.length}` : ''
@@ -253,7 +302,9 @@ function drawCli(at: number) {
   const foot = ctx.measureText(both).width <= room ? both : gate ? extra : count || extra
 
   ctx.font = SMALL
-  const what = s.live && s.phase >= 0 ? (s.phases[s.phase] ?? '').toLowerCase() : line.main.toLowerCase()
+  const step = s.live && s.phase >= 0 ? (s.phases[s.phase] ?? '').toLowerCase() : line.main.toLowerCase()
+  // with several workflows, the folder says whose card this is
+  const what = deck ? `${deck.folder.toLowerCase()}: ${step}` : step
   const wrapped: string[] = []
   for (const word of what.split(/\s+/).filter(Boolean)) {
     const last = wrapped[wrapped.length - 1]
@@ -399,17 +450,28 @@ function drawDrawn(at: number) {
   const h = H + ROW
   const top = ROW
   const gate = line.tone === 'gate'
-  let html = `<div class="pill" data-act="open" data-pos="top:${top}px;width:${W}px;height:${H}px">${pillSvg(W, H, 'cmp-pill' + (gate ? 'g' : 's'), gate)}`
+  const deck = state?.deck ?? null
+  let html = ''
+  // the deck: the cards behind peek above the pill, the nearest last
+  if (deck) {
+    deck.behind.slice(0, 2).map((card, k) => ({ card, k: k + 1 })).reverse().forEach(({ card, k }) => {
+      html += `<div class="sheet" data-pos="top:${top - 5 * k}px;left:${7 * k}px;width:${W - 14 * k}px;height:${H}px">${pillSvg(W - 14 * k, H, 'deck' + k, card.wait)}</div>`
+    })
+  }
+  html += `<div class="pill" data-act="open" data-pos="top:${top}px;width:${W}px;height:${H}px">${pillSvg(W, H, 'cmp-pill' + (gate ? 'g' : 's'), gate)}`
   html += `<span class="ring">${ringSvg(at, loop, line)}</span>`
   // the ring's initial says who and, at a review, how long is left: the line is all words for what
   const tail = (state?.flow.paused && !gate ? 'Paused ' : '') + (gate ? '' : line.tail)
   html += `<span class="line"><b>${esc(line.main)}</b></span>${tail ? `<span class="tail${state?.flow.paused ? ' hot' : ''}">${esc(tail)}</span>` : ''}</div>`
+  // the count on the pill's corner: a press brings the next card up
+  if (deck) html += `<div class="deckn" data-act="next" title="The next workflow" data-pos="top:${top - 8}px;left:${W - 54}px">${esc(`1 of ${deck.count} ›`)}</div>`
   if (open) {
     // the row is paper too, so it reads over any desktop
     html += `<div class="row" data-pos="top:0;height:${ROW - 4}px;width:${W}px">${pillSvg(W, ROW - 4, 'cmp-row', false)}`
     // the step's name, short when three buttons need the room
     const many = actionsFor(s).length >= 3
-    if (s.live && s.phase >= 0) html += `<span class="phase">${s.phase + 1}/${s.phases.length}${many ? '' : ` · ${esc(s.phases[s.phase] ?? '')}`}</span>`
+    const where = deck ? `${esc(deck.folder)} · ` : ''
+    if (s.live && s.phase >= 0) html += `<span class="phase">${where}${s.phase + 1}/${s.phases.length}${many || deck ? '' : ` · ${esc(s.phases[s.phase] ?? '')}`}</span>`
     else if (state?.claude && state.claude.state !== 'idle') {
       const secs = Math.floor(now() - state.claude.since)
       html += `<span class="phase">Working ${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}</span>`
@@ -463,5 +525,5 @@ canvas.addEventListener('pointerdown', event => {
 drawnHost.addEventListener('pointerdown', event => {
   const el = (event.target as HTMLElement).closest<HTMLElement>('[data-act]')
   if (!el?.dataset.act) return
-  act(el.dataset.act as 'approve' | 'pause' | 'open' | 'decline', situation(now()).gate)
+  act(el.dataset.act as 'approve' | 'pause' | 'open' | 'decline' | 'next', situation(now()).gate)
 })
