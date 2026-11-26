@@ -1,35 +1,76 @@
 #!/usr/bin/env bash
 # Usage: dispatch_codex.sh <ticket-file> <task-dir>
-# Runs Codex CLI on a ticket in its own git worktree/branch (mm/<task>-codex), based on the
-# current HEAD (uncommitted changes are NOT included). Commits Codex's work on that branch.
 set -uo pipefail
 source "$(dirname "$0")/_lib.sh"
 [ $# -eq 2 ] || die "usage: dispatch_codex.sh <ticket-file> <task-dir>"
-ticket="$1"; taskdir="$(cd "$2" && pwd)" || die "task dir not found: $2"
+ticket="$1"; taskdir="$(cd "$2" && pwd -P)" || die "task dir not found: $2"
 [ -f "$ticket" ] || die "ticket not found: $ticket"
 command -v codex >/dev/null || die "codex CLI not installed (npm i -g @openai/codex, then: codex login)"
 root="$(git rev-parse --show-toplevel 2>/dev/null)" || die "not inside a git repository"
-slug="$(basename "$taskdir")"; branch="mm/${slug}-codex"; # Keep the worktree OUTSIDE the repo so reviewers and scouts do not see duplicate files.
-wt="${MM_WORKTREES:-$HOME/.multimodel-worktrees}/$(basename "$root")/${slug}-codex"; mkdir -p "$(dirname "$wt")"
-if [ ! -d "$wt" ]; then
+root="$(cd "$root" && pwd -P)" || die "cannot resolve repository"
+base="$(git -C "$root" rev-parse --verify HEAD)" || die "repository needs a commit"
+slug="$(basename "$taskdir")"; branch="mm/${slug}-codex"
+git check-ref-format --branch "$branch" >/dev/null || die "invalid task branch"
+model="$(cfg codex_model)" || die "cannot read config"
+effort="$(cfg codex_reasoning_effort)" || die "cannot read config"
+t="$(cfg codex_timeout 2400)" || die "cannot read config"
+valid_effort "$effort" || die "invalid codex_reasoning_effort: $effort"
+valid_timeout "$t" || die "invalid codex_timeout: $t"
+# Hash the shared git directory, so linked worktrees agree on repository identity.
+common="$(cd "$root" && cd "$(git rev-parse --git-common-dir)" && pwd -P)" || die "cannot resolve git directory"
+repo_id="$(python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.argv[1].encode()).hexdigest()[:16])' "$common")" || die "cannot identify repository"
+wt_parent="${MM_WORKTREES:-$HOME/.multimodel-worktrees}/$repo_id"
+mkdir -p "$wt_parent" || die "cannot create worktree parent"
+wt="$(cd "$wt_parent" && pwd -P)/${slug}-codex"
+lock_run "$wt.lock"
+receipt="$taskdir/05-receipt-codex.md"; log="$taskdir/05-codex-log.txt"
+begin_locked_run "$receipt"
+attempt="$(mktemp -d "$taskdir/.codex-build.XXXXXX")" || die "cannot create attempt directory"
+for old in "$receipt" "$log" "$taskdir/05-codex-diffstat.txt"; do
+  [ ! -e "$old" ] || mv "$old" "$attempt/previous-$(basename "$old")" || die "cannot archive previous output"
+done
+if [ ! -e "$wt" ]; then
   if git -C "$root" show-ref --verify --quiet "refs/heads/$branch"; then
-    git -C "$root" worktree add -q "$wt" "$branch" || die "could not create worktree"
+    git -C "$root" worktree add -q "$wt" "$branch" || die "could not attach branch (check existing worktrees)"
   else
-    git -C "$root" worktree add -q -b "$branch" "$wt" HEAD || die "could not create worktree"
+    git -C "$root" worktree add -q -b "$branch" "$wt" "$base" || die "could not create worktree"
   fi
 fi
-[ -n "$(git -C "$root" status --porcelain --untracked-files=no)" ] && \
-  echo "NOTE: you have uncommitted changes; Codex's worktree starts from HEAD without them." >&2
-model="$(cfg codex_model)"; t="$(cfg codex_timeout 2400)"
-receipt="$taskdir/05-receipt-codex.md"; log="$taskdir/05-codex-log.txt"
-args=(exec --cd "$wt" --sandbox workspace-write --skip-git-repo-check --output-last-message "$receipt")
-[ -n "$model" ] && args+=(-m "$model")
+[ -d "$wt" ] && [ ! -L "$wt" ] || die "invalid worktree path: $wt"
+actual="$(git -C "$wt" rev-parse --show-toplevel)" || die "invalid worktree"
+[ "$(cd "$actual" && pwd -P)" = "$(cd "$wt" && pwd -P)" ] || die "path is not a worktree root"
+actual_common="$(cd "$wt" && cd "$(git rev-parse --git-common-dir)" && pwd -P)" || die "invalid worktree git directory"
+[ "$actual_common" = "$common" ] || die "worktree belongs to another repository"
+[ "$(git -C "$wt" symbolic-ref --quiet --short HEAD)" = "$branch" ] || die "unexpected worktree branch"
+dirty="$(git -C "$wt" status --porcelain)" || die "cannot inspect worktree"
+[ -z "$dirty" ] || die "worktree has uncommitted changes; inspect and resolve before retrying: $wt"
+git -C "$wt" merge-base --is-ancestor "$base" HEAD || die "existing branch does not contain current project HEAD; reconcile it before retrying"
+dirty="$(git -C "$root" status --porcelain --untracked-files=no)" || die "cannot inspect project"
+[ -z "$dirty" ] || echo "NOTE: uncommitted project changes are excluded from Codex's worktree." >&2
+args=(exec --cd "$wt" --sandbox workspace-write --output-last-message "$attempt/receipt.md")
+[ -z "$model" ] || args+=(-m "$model")
+[ -z "$effort" ] || args+=(-c "model_reasoning_effort=\"$effort\"")
 echo "Codex working in $wt on branch $branch (timeout ${t}s)..."
-start=$(date +%s)
-run_with_timeout "$t" codex "${args[@]}" "$(cat "$ticket")" </dev/null >"$log" 2>&1; rc=$?
-git -C "$wt" add -A && git -C "$wt" commit -q -m "codex: $slug" -m "Generated by Codex CLI from $(basename "$ticket")" 2>/dev/null
-git -C "$root" diff --stat "HEAD...$branch" >"$taskdir/05-codex-diffstat.txt" 2>/dev/null
-echo "Codex exit code: $rc after $(( $(date +%s) - start ))s"
-echo "Receipt:  $receipt"; echo "Log:      $log"; echo "Branch:   $branch  (review with: git diff HEAD...$branch)"
-echo "--- diff stat ---"; cat "$taskdir/05-codex-diffstat.txt"
-exit $rc
+run_with_timeout "$t" codex "${args[@]}" - <"$ticket" >"$attempt/log.txt" 2>&1
+rc=$?
+cp "$attempt/log.txt" "$log" || die "cannot save log"
+if [ "$rc" -ne 0 ]; then
+  echo "Codex failed (exit $rc); inspect $wt and $attempt" >&2
+  exit "$rc"
+fi
+[ -s "$attempt/receipt.md" ] || die "Codex did not produce a receipt: $attempt"
+[ "$(git -C "$wt" symbolic-ref --quiet --short HEAD)" = "$branch" ] || die "Codex changed branches; inspect worktree"
+git -C "$wt" add -A || die "could not stage Codex changes"
+git -C "$wt" diff --cached --quiet
+rc=$?
+case "$rc" in
+  0) echo "No changes to commit.";;
+  1) git -C "$wt" commit -q -m "codex: $slug" -m "Generated by Codex CLI from $(basename "$ticket")" || die "could not commit Codex changes";;
+  *) die "could not inspect staged changes";;
+esac
+git -C "$root" diff --stat "$base...$branch" >"$attempt/diffstat.txt" || die "could not generate diff stat"
+cp "$attempt/diffstat.txt" "$taskdir/05-codex-diffstat.txt" || die "cannot save diff stat"
+cp "$attempt/receipt.md" "$receipt" || die "cannot save receipt"
+echo "Receipt: $receipt"
+echo "Branch: $branch (review with: git diff $base...$branch)"
+cat "$taskdir/05-codex-diffstat.txt"

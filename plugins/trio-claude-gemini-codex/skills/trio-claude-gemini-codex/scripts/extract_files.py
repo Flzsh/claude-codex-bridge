@@ -36,6 +36,10 @@ def main(argv):
     answer, allowed, dry = argv[0], argv[1].strip("/"), "--dry-run" in argv[2:]
     root = repo_root()
     allowed_abs = os.path.realpath(os.path.join(root, allowed))
+    root = os.path.realpath(root)
+    if os.path.isabs(argv[1]) or ".." in allowed.split("/") or os.path.commonpath([root, allowed_abs]) != root:
+        print("ERROR: allowed-dir must be inside the repository", file=sys.stderr)
+        return 1
     with open(answer, encoding="utf-8") as f:
         text = f.read()
 
@@ -48,7 +52,7 @@ def main(argv):
         rel, body = parts[i].strip(), parts[i + 1]
         m = re.search(r"```[^\n]*\n(.*?)\n```", body, flags=re.S)
         target = os.path.realpath(os.path.join(root, rel))
-        if os.path.isabs(rel) or not (target == allowed_abs or target.startswith(allowed_abs + os.sep)):
+        if os.path.isabs(rel) or ".." in rel.split("/") or not target.startswith(allowed_abs + os.sep):
             print(f"REFUSED (outside {allowed}/): {rel}", file=sys.stderr)
             refused += 1
             continue

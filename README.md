@@ -37,7 +37,7 @@ A model checking its own work shares its own blind spots. This workflow puts a *
 | Acceptance tests | **Gemini**, from the contract only | Tests check what was promised, not what the code happens to do |
 | Backend code | **Codex** | Well-scoped pieces built in parallel on their own branch |
 | Visual QA | **Gemini**, from screenshots | Strong image understanding catches layout, contrast and missing-state bugs that tests don't |
-| Code review | **Codex** | A strict reviewer that didn't write the code under review |
+| Code review | **Codex** | A fresh review session without the implementation conversation |
 | Everything else | **Claude** | Leads, decides, writes the frontend, integrates, and reports honestly |
 
 You stay in control: the workflow **always stops for your approval of the plan**, and asks before merging or deploying unless you turn that off.
@@ -145,16 +145,21 @@ A medium feature takes roughly **1–2 hours of wall-clock time**, mostly waitin
 
 ### Settings
 
-The first run creates `.multimodel/config.yaml` in your project:
+The first run creates `.multimodel/config.yaml` in your project. Existing configurations remain compatible:
 
 | Setting | Default | What it does |
 |---|---|---|
 | `gemini_model` | `gemini-4-neon-high` | Must be a Gemini model (`agy models` lists them). Antigravity also offers Claude models; using one would defeat the independent second opinion, so the scripts refuse. |
 | `codex_model`, `codex_review_model` | CLI default | Codex models for building and reviewing |
+| `codex_reasoning_effort`, `codex_review_reasoning_effort` | CLI default | Optional reasoning effort. Review inherits build effort when unset. |
 | `test_command` | — | e.g. `npm test` |
 | `deploy_command`, `live_url` | — | Leave empty to stop after merge |
 | `auto_merge`, `auto_deploy` | `false` | Set `true` to skip the merge/deploy questions |
 | `max_review_rounds` | `2` | Codex review rounds before open issues go to you |
+
+### UI and automation integration (v1.1)
+
+Trio keeps a single workflow and a stable task directory for Claude Code, a local dashboard, or another controller. See [the integration contract](docs/ui-integration.md) for the JSON status interface, script arguments, and approval boundaries.
 
 ### What you get
 
@@ -170,7 +175,7 @@ Everything is saved in the task folder, so you can audit or resume a run:
 ## Safety and privacy
 
 - **Gemini runs read-only** (Antigravity's plan mode). It can read files but never edit them or run commands.
-- **Secrets are hidden from Gemini.** Files like `.env`, keys and credentials are blocked by exact path on every call. Antigravity itself ignores `.geminiignore`, so the script does this. Add more paths to `.geminiignore` to block them too.
+- **Secrets are hidden from Gemini.** The script discovers common secret filenames recursively and supplies exact-path deny rules to Antigravity. Add individual file paths to `.geminiignore` (globs and directories are rejected). These rules are best-effort safeguards, not a filesystem security boundary; keep sensitive data outside the project.
 - **Codex builds in a separate git worktree** (under `~/.multimodel-worktrees/`), on its own branch. Claude reads the actual diff before merging anything.
 - **Outside output is treated as data.** Text from Gemini or Codex is evaluated, never run as instructions.
 - **Both outside models see your code.** Don't use this on code you aren't allowed to share with Google and OpenAI. Codex can read whatever its sandbox allows, so keep secrets out of tracked files.
