@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import type { SidebarState } from '../types'
-import { PANE_THEME } from '../core/pane'
+import { PANE_THEME, PANE_THEME_WHITE } from '../core/pane'
 
 const PANE = {
   plugin: 'codex-bridge',
@@ -125,6 +125,20 @@ for (const look of ['cli', 'drawn'] as const) {
     await ui.unmount()
   })
 }
+
+test('the terminal look on white, for Claude Code in its light theme; the drawn look stays paper', async ($, on) => {
+  let state: SidebarState = { ...base, white: true, flow: null, live: false, gate: null }
+  on('state.get', (_: unknown, e: { key: string }) => stored(state)(_, e))
+  let ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  let card = await ui.find({ type: 'Box' })
+  expect([card?.props.backgroundColor, card?.props.borderColor]).toEqual([PANE_THEME_WHITE.ground, PANE_THEME_WHITE.edge])
+  await ui.unmount()
+  state = { ...state, look: 'drawn' }
+  ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  card = await ui.find({ type: 'Box' })
+  expect(card?.props.backgroundColor).toBe(PANE_THEME.drawn.ground)
+  await ui.unmount()
+})
 
 test('mid-workflow: steering is said in the chat; a note left from the app still shows', async ($, on) => {
   on('state.get', stored({ ...base, notes: { waiting: 1, readAt: null } }))

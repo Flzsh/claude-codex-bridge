@@ -57,6 +57,8 @@ export type ConsoleState = {
 export type SidebarState = {
   /** The app's look, which the picture is drawn in. */
   look: 'cli' | 'drawn'
+  /** The terminal look on white, for Claude Code in its light theme (older builds stored none). */
+  white?: boolean
   /** The picture (an SVG document), what it says in words, and its height. */
   svg: string
   alt: string

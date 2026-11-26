@@ -40,6 +40,7 @@ contextBridge.exposeInMainWorld('bridge', {
   handoff: (mode: 'fill' | 'send', text: string) => ipcRenderer.invoke('handoff', mode, text),
   pin: call('pin'),
   companionToggle: call('companionToggle'),
+  paneToggle: call('paneToggle'),
   companionOpen: call('companionOpen'),
   deckNext: call('deckNext'),
   setWorkflow: (workflow: unknown) => ipcRenderer.invoke('setWorkflow', workflow),

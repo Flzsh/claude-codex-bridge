@@ -28,6 +28,8 @@ export type Settings = {
   effortChoices: Record<Provider, string[]>
   companion: 'auto' | 'always' | 'off'
   theme: Theme
+  /** The Claude Code pane's ground in the terminal look. */
+  pane: 'dark' | 'white'
   bashError: string
   /** What became of the last message the box sent Claude. */
   delivery: { route: 'claude-start' | 'claude-next-step'; at: number; state: 'waiting' | 'read' | 'nobody' } | null
@@ -75,6 +77,7 @@ export type BridgeApi = {
   setMode(mode: string): Promise<void>
   pin(): Promise<void>
   companionToggle(): Promise<void>
+  paneToggle(): Promise<void>
   openFolder(): Promise<void>
   stop(provider: Provider): Promise<void>
 }

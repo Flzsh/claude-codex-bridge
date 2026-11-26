@@ -77,6 +77,8 @@ type Config = {
   companionAt: { x: number; y: number } | null
   /** The look: a terminal program, or drawn by hand. */
   theme: 'cli' | 'drawn'
+  /** The Claude Code pane in the terminal look: on dark, or on white for Claude Code's light theme. */
+  pane: 'dark' | 'white'
   /** The flow shown, or null for the newest. */
   shownFlow: string | null
 }
@@ -92,6 +94,7 @@ const DEFAULT_CONFIG: Config = {
   companion: 'auto',
   companionAt: null,
   theme: 'cli',
+  pane: 'dark',
   shownFlow: null,
 }
 
@@ -121,6 +124,7 @@ async function loadConfig() {
   try {
     config = { ...DEFAULT_CONFIG, ...(JSON.parse(await readFile(configFile(), 'utf8')) as Partial<Config>) }
     if (!['auto', 'always', 'off'].includes(config.companion)) config.companion = 'auto'
+    if (config.pane !== 'white') config.pane = 'dark'
   } catch {
     config = { ...DEFAULT_CONFIG }
   }
@@ -214,6 +218,7 @@ async function snapshot() {
     efforts,
     companion: config.companion,
     theme: config.theme,
+    pane: config.pane,
     models: [...CODEX_MODELS],
     effortChoices: { codex: [...EFFORTS.codex], gemini: [...EFFORTS.gemini] },
     bashError,
@@ -610,11 +615,11 @@ function announceGate(title: string, summary: string, noAuto: boolean) {
 }
 
 /** The look: the window's own colours follow it. */
-/** Tells the Claude Code pane which look to draw in: <plugin>/status/look.json. */
+/** Tells the Claude Code pane which look to draw in, and on which ground: <plugin>/status/look.json. */
 async function writeLook() {
   try {
     await mkdir(join(PLUGIN_ROOT, 'status'), { recursive: true })
-    await writeFile(join(PLUGIN_ROOT, 'status', 'look.json'), JSON.stringify({ theme: config.theme }))
+    await writeFile(join(PLUGIN_ROOT, 'status', 'look.json'), JSON.stringify({ theme: config.theme, pane: config.pane }))
   } catch {
     // the pane keeps its last look
   }
@@ -1001,6 +1006,13 @@ function wireIpc() {
     config.pinned = !config.pinned
     window?.setAlwaysOnTop(config.pinned)
     saveConfig()
+    send('state', await snapshot())
+  })
+  // the Claude Code pane's ground, dark or white (the terminal look; the drawn one is paper)
+  handle('paneToggle', async () => {
+    config.pane = config.pane === 'white' ? 'dark' : 'white'
+    saveConfig()
+    await writeLook()
     send('state', await snapshot())
   })
   handle('companionToggle', async () => {

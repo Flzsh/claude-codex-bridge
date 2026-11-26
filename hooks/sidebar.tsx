@@ -13,7 +13,7 @@ import type { EngineInterface, On } from 'claude-code'
 import type { SidebarState } from '../types'
 import { bashPath } from '../core/console'
 import { currentFlow, ofFlow, parseFlow, type FlowEvent } from '../core/flow'
-import { ago, emptyAlt, emptySvg, lastFlow, PANE_THEME, paneAlt, paneModel, paneSvg, pictureWidth, type EmptyModel } from '../core/pane'
+import { ago, emptyAlt, emptySvg, lastFlow, onWhite, PANE_THEME, PANE_THEME_WHITE, paneAlt, paneModel, paneSvg, pictureWidth, type EmptyModel, type PaneTheme } from '../core/pane'
 import { parseWorkflow, type Workflow } from '../core/workflow'
 import { IDLE_H, SIDEBAR_W, sidebarView, type FlowHead, type Look } from '../core/sidebar'
 import { findBash, openConsole } from './console-pane'
@@ -76,13 +76,21 @@ export async function openSidebar($: EngineInterface) {
   await $.ui.open({ id: PANE, title: TITLE, focus: true })
 }
 
-/** The app's look, as it writes it for this pane; the terminal look until it has. */
-async function readLook($: EngineInterface): Promise<Look> {
+/** The app's look, as it writes it for this pane, and whether the terminal look sits on white
+ * (for Claude Code in its light theme); the terminal look on dark until it has. */
+async function readLook($: EngineInterface): Promise<{ look: Look; white: boolean }> {
   try {
-    return (JSON.parse(await readText($, `${root}/status/look.json`)) as { theme?: string }).theme === 'drawn' ? 'drawn' : 'cli'
+    const saved = JSON.parse(await readText($, `${root}/status/look.json`)) as { theme?: string; pane?: string }
+    const look: Look = saved.theme === 'drawn' ? 'drawn' : 'cli'
+    return { look, white: look === 'cli' && saved.pane === 'white' }
   } catch {
-    return 'cli'
+    return { look: 'cli', white: false }
   }
+}
+
+/** The colours the pane is drawn in: the look's, or the terminal look's on white. */
+export function paneTheme(look: Look, white?: boolean): PaneTheme {
+  return look === 'cli' && white ? PANE_THEME_WHITE : PANE_THEME[look]
 }
 
 /** The owner's steps (the app's step editor writes them), else the defaults. */
@@ -137,7 +145,7 @@ async function waitingNotes($: EngineInterface, flow: string | null): Promise<nu
 export async function pollSidebar($: EngineInterface) {
   if (!cwd) return
   const now = (await $.clock.now()) / 1000
-  const look = await readLook($)
+  const { look, white } = await readLook($)
   const all = await readEvents($)
   const id = currentFlow(all)
   const mine = id ? ofFlow(all, id) : []
@@ -171,11 +179,12 @@ export async function pollSidebar($: EngineInterface) {
 
   // the picture is made again only when what it shows, or the pane's width, changes (it moves by itself)
   const width = pictureWidth(paneColumns)
-  const key = JSON.stringify([look, width, model ?? empty])
+  const key = JSON.stringify([look, white, width, model ?? empty])
   if (key !== pictureKey) {
     pictureKey = key
     // bare: the pane around it is drawn in the look, its ground and edge
-    const svg = model ? paneSvg(model, look, now, width, 'bare') : emptySvg(empty!, look, width, 'bare')
+    const drawn = model ? paneSvg(model, look, now, width, 'bare') : emptySvg(empty!, look, width, 'bare')
+    const svg = white ? onWhite(drawn) : drawn
     picture = {
       svg,
       alt: model ? paneAlt(model) : emptyAlt(empty!),
@@ -191,6 +200,7 @@ export async function pollSidebar($: EngineInterface) {
   const next: SidebarState = {
     ...before,
     look,
+    white,
     ...picture,
     flow: view ? view.id : null,
     live: Boolean(view && !view.finished),
@@ -258,7 +268,7 @@ export function registerSidebar(on: On) {
     const pictureEl =
       drawsPicture && 'Svg' in table ? (
         <Box flexDirection="column" alignItems="center">
-          <table.Svg key={`picture-${st.look}`} source={st.svg} alt={st.alt} width={size('width', SIDEBAR_W)} height={size('height', st.height)} isInteractive />
+          <table.Svg key={`picture-${st.look}${st.white ? '-white' : ''}`} source={st.svg} alt={st.alt} width={size('width', SIDEBAR_W)} height={size('height', st.height)} isInteractive />
         </Box>
       ) : (
         <Text color={st.gate ? 'warning' : undefined}>{st.alt || 'No workflow.'}</Text>
@@ -272,7 +282,7 @@ export function registerSidebar(on: On) {
     // look's colours (words, and buttons drawn as coloured words). The app keeps a thin margin
     // of its own around the card: what a plugin draws is clipped to the pane's inner box.
     if (drawsPicture) {
-      const th = PANE_THEME[st.look]
+      const th = paneTheme(st.look, st.white)
       const style = { mono: th.mono, italic: th.italic }
       const say = (text: string) => (th.mono ? text.toLowerCase() : text)
       const words = (text: string, colour: string = th.dim, wrap: 'wrap' | 'truncate-end' = 'wrap') => (

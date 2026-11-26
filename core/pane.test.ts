@@ -1,7 +1,7 @@
 import { describe as group, expect, test } from 'claude-code/testing'
 
 import type { FlowEvent, Lane } from './flow'
-import { ago, emptyAlt, emptyLayoutWidth, emptySvg, lastFlow, paneAlt, paneModel, paneSvg, pictureWidth, type EmptyModel, type PaneRow } from './pane'
+import { ago, emptyAlt, emptyLayoutWidth, emptySvg, lastFlow, onWhite, paneAlt, paneModel, paneSvg, pictureWidth, type EmptyModel, type PaneRow } from './pane'
 import type { FlowHead } from './sidebar'
 
 const head: FlowHead = { id: 'f1', title: 'turn Bridge into the command center', size: 'large', state: null }
@@ -275,5 +275,27 @@ group('the pane with no workflow', () => {
   test('its words for the terminal', () => {
     expect(emptyAlt({ busy: true, last: null, runs: [] })).toBe('No workflow is running. Claude is working.')
     expect(emptyAlt({ busy: false, last: lastFlow(ended, 'f1', 120), runs: [] })).toContain('Last workflow: ship <it>, finished 1 min ago.')
+  })
+})
+
+group('on white', () => {
+  const lightness = (hex: string) => {
+    const [r, g, b] = [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16) / 255) as [number, number, number]
+    return (Math.max(r, g, b) + Math.min(r, g, b)) / 2
+  }
+  const colours = (svg: string) => [...new Set(svg.match(/#[0-9a-f]{6}/gi) ?? [])].map(c => c.toLowerCase())
+
+  test('the terminal ground turns white, and every other colour its lightness turned over', () => {
+    const dark = emptySvg({ busy: true, last: null, runs: [] }, 'cli', 440, 'bare')
+    const white = onWhite(dark)
+    expect(colours(white)).not.toContain('#151413')
+    // light words turn dark, dark lines turn light; hues are kept
+    expect(onWhite('#151413')).toBe('#ffffff')
+    expect(lightness(onWhite('#ece9e2'))).toBeLessThan(0.2)
+    expect(lightness(onWhite('#2a2826'))).toBeGreaterThan(0.8)
+    const orange = onWhite('#d97757')
+    expect(parseInt(orange.slice(1, 3), 16)).toBeGreaterThan(parseInt(orange.slice(5, 7), 16))
+    // the drawing is the same apart from its colours
+    expect(white.replace(/#[0-9a-f]{6}/gi, '#')).toBe(dark.replace(/#[0-9a-f]{6}/gi, '#'))
   })
 })

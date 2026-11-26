@@ -684,6 +684,7 @@ export class CliView {
     for (const path of st.recent.filter(p => p !== st.workdir).slice(0, 4)) row('', path, () => void flow.api.setWorkdir(path), C.dim)
     y++
     row('look', st.theme === 'cli' ? 'terminal' : 'drawn', () => void flow.setTheme(st.theme === 'cli' ? 'drawn' : 'cli'))
+    if (st.theme === 'cli') row('claude pane', st.pane === 'white' ? 'white' : 'dark', () => void flow.api.paneToggle())
     row('companion', st.companion === 'auto' ? 'shows while work runs' : st.companion === 'always' ? 'always on' : 'off', () => void flow.api.companionToggle())
     row('on top', st.pinned ? 'yes' : 'no', () => void flow.api.pin())
     y++

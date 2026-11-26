@@ -473,6 +473,44 @@ export type PaneTheme = {
 }
 
 const DRAWN_PAPER = '#faf9f5' // the app's own paper
+/** The terminal look on white, for a Claude Code window in its light theme. */
+export const PANE_THEME_WHITE: PaneTheme = {
+  ground: '#ffffff', edge: '#e3dfd6', waitingEdge: '#c98f2a', ink: '#2a2622', dim: '#6f6a62', accent: '#b55a30',
+  ok: '#3f7a38', warn: '#a8730f', bad: '#b3392f', running: '#a8730f', slip: null, mono: true, italic: false,
+}
+
+/**
+ * The terminal look's picture on white: every colour's lightness turned over, its hue and strength
+ * kept, so the near-white words turn near-black, the faint lines light grey, and each agent's colour
+ * a deeper shade of itself that reads on white. The terminal's ground turns white.
+ */
+export function onWhite(svg: string): string {
+  return svg.replace(/#[0-9a-fA-F]{6}\b/g, hex => {
+    if (hex.toLowerCase() === C.bg) return '#ffffff'
+    const [h, s, l] = toHsl(hex)
+    return fromHsl(h, s, Math.max(0.04, Math.min(0.97, 1 - l)))
+  })
+}
+
+function toHsl(hex: string): [number, number, number] {
+  const [r, g, b] = [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16) / 255) as [number, number, number]
+  const max = Math.max(r, g, b), min = Math.min(r, g, b), l = (max + min) / 2
+  if (max === min) return [0, 0, l]
+  const d = max - min
+  const s = l > 0.5 ? d / (2 - max - min) : d / (max + min)
+  const h = max === r ? (g - b) / d + (g < b ? 6 : 0) : max === g ? (b - r) / d + 2 : (r - g) / d + 4
+  return [h / 6, s, l]
+}
+
+function fromHsl(h: number, s: number, l: number): string {
+  const q = l < 0.5 ? l * (1 + s) : l + s - l * s, p = 2 * l - q
+  const part = (t: number) => {
+    const u = t < 0 ? t + 1 : t > 1 ? t - 1 : t
+    return u < 1 / 6 ? p + (q - p) * 6 * u : u < 1 / 2 ? q : u < 2 / 3 ? p + (q - p) * (2 / 3 - u) * 6 : p
+  }
+  return '#' + [part(h + 1 / 3), part(h), part(h - 1 / 3)].map(v => Math.round(v * 255).toString(16).padStart(2, '0')).join('')
+}
+
 export const PANE_THEME: Record<Look, PaneTheme> = {
   cli: { ground: C.bg, edge: C.rule, waitingEdge: mix(C.amber, C.bg, 0.25), ink: C.fg, dim: C.dim, accent: C.claude, ok: C.green, warn: C.amber, bad: C.red, running: C.amber, slip: C.fg, mono: true, italic: false },
   drawn: { ground: DRAWN_PAPER, edge: INK, waitingEdge: '#a86f14', ink: INK, dim: '#6b675f', accent: CLAY_UI, ok: '#5f6f45', warn: '#a86f14', bad: '#b3392f', running: '#a86f14', slip: null, mono: false, italic: true },
