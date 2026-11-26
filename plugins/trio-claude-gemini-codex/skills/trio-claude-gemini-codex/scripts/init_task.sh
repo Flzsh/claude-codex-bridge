@@ -5,7 +5,7 @@ source "$(dirname "$0")/_lib.sh"
 root="$(repo_root)"; mm="$root/.multimodel"
 if [ "${1-}" = --resume ]; then
   [ $# -eq 2 ] || die "usage: init_task.sh --resume <task-id>"
-  [[ "$2" =~ ^[0-9]{8}-[a-z0-9-]+$ ]] || die "invalid task ID"
+  [[ "$2" =~ ^[0-9]{8}-[a-zA-Z0-9-]+$ ]] || die "invalid task ID"
   [ -d "$mm/tasks/$2" ] && [ ! -L "$mm/tasks/$2" ] || die "task not found: $2"
   printf '%s\n' "$mm/tasks/$2"
   exit 0
@@ -28,11 +28,6 @@ if [ ! -f "$mm/config.yaml" ]; then
 fi
 [ -f "$mm/.gitignore" ] || (set -C; printf 'worktrees/\n' > "$mm/.gitignore") 2>/dev/null || [ -f "$mm/.gitignore" ]
 [ -f "$mm/tasks/.gitignore" ] || (set -C; printf '*\n' > "$mm/tasks/.gitignore") 2>/dev/null || [ -f "$mm/tasks/.gitignore" ]
-base="$mm/tasks/$(date +%Y%m%d)-$slug"
-dir="$base"; n=1
-while ! mkdir "$dir" 2>/dev/null; do
-  [ -d "$dir" ] || die "cannot create task directory: $dir"
-  n=$((n + 1)); dir="$base-$n"
-done
+dir="$(mktemp -d "$mm/tasks/$(date +%Y%m%d)-$slug-XXXXXXXX")" || die "cannot create task directory"
 mkdir "$dir/screenshots"
 printf '%s\n' "$dir"

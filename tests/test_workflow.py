@@ -7,6 +7,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from unittest.mock import patch
 
@@ -129,14 +130,42 @@ class ScriptTests(unittest.TestCase):
         return Path(self.run_command(SCRIPTS / "init_task.sh", "Same title"))
 
     def test_parallel_tasks_get_unique_paths_and_artifacts_stay_local(self):
-        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as workers:
-            tasks = list(workers.map(lambda _: self.new_task(), range(4)))
-        self.assertEqual(len(set(tasks)), 4)
+        count = 12
+        barrier = threading.Barrier(count, timeout=30)
+
+        def start_task(_):
+            barrier.wait()
+            return self.new_task()
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=count) as workers:
+            tasks = list(workers.map(start_task, range(count)))
+        self.assertEqual(len(set(tasks)), count)
+        self.assertEqual(set(tasks), {p for p in (self.repo / ".multimodel/tasks").iterdir() if p.is_dir()})
         for task in tasks:
+            self.assertRegex(task.name, r"^[0-9]{8}-same-title-[a-zA-Z0-9]{8}$")
+            self.assertTrue((task / "screenshots").is_dir())
             artifact = task / "raw-prompt.md"
-            artifact.write_text("Synthetic prompt.\n")
+            artifact.write_text(task.name + "\n")
             self.run_command("git", "check-ignore", artifact)
-        self.assertTrue((self.repo / ".multimodel/config.yaml").is_file())
+            self.assertEqual(self.run_command(SCRIPTS / "init_task.sh", "--resume", task.name), str(task))
+        for task in tasks:
+            self.assertEqual((task / "raw-prompt.md").read_text(), task.name + "\n")
+        config = self.repo / ".multimodel/config.yaml"
+        self.assertEqual(config.read_bytes(), (SCRIPTS.parent / "config.example.yaml").read_bytes())
+        self.assertEqual(list(config.parent.glob("config.*")), [config])
+        listed = json.loads(self.run_command(sys.executable, SCRIPTS / "task_status.py"))
+        self.assertEqual({item["id"] for item in listed["tasks"]}, {task.name for task in tasks})
+
+    def test_task_status_and_resume_accept_legacy_and_mixed_case_ids(self):
+        tasks_dir = self.repo / ".multimodel/tasks"
+        for task_id in ("20261125-old-task", "20261125-old-task-2", "20261125-new-task-aB3CdE7f"):
+            task = tasks_dir / task_id
+            task.mkdir(parents=True)
+            self.assertEqual(self.run_command(SCRIPTS / "init_task.sh", "--resume", task_id), str(task))
+            status = json.loads(self.run_command(sys.executable, SCRIPTS / "task_status.py", task_id))
+            self.assertEqual(status["task"]["id"], task_id)
+        listed = json.loads(self.run_command(sys.executable, SCRIPTS / "task_status.py"))
+        self.assertEqual({item["id"] for item in listed["tasks"]}, {p.name for p in tasks_dir.iterdir()})
 
     def test_init_keeps_existing_project_config_and_ignore_rules(self):
         config = self.repo / ".multimodel/config.yaml"

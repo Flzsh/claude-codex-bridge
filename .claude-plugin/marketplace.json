@@ -7,7 +7,7 @@
       "name": "trio-claude-gemini-codex",
       "source": "./plugins/trio-claude-gemini-codex",
       "description": "Claude leads and builds the frontend; Gemini gives independent plans, design review, acceptance tests and screenshot QA; Codex builds backend tickets and reviews the PR. Uses your own subscriptions through their CLIs.",
-      "version": "1.1.0",
+      "version": "1.1.1",
       "category": "development",
       "tags": ["workflow", "multi-model", "gemini", "codex", "code-review", "testing"]
     }

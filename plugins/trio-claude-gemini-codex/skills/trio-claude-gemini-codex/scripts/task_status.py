@@ -6,6 +6,8 @@ from pathlib import Path
 import re
 import subprocess
 
+TASK_ID = re.compile(r"[0-9]{8}-[a-zA-Z0-9-]+")
+
 ARTIFACTS = {
     "request": ["00-request.md"],
     "understand": ["01-context.md", "01-scout-gemini.md"],
@@ -57,7 +59,7 @@ def main():
         root = Path(result.stdout.strip()) if result.returncode == 0 else Path.cwd()
     tasks = root.resolve() / ".multimodel" / "tasks"
     if args.task_id:
-        if not re.fullmatch(r"\d{8}-[a-z0-9-]+", args.task_id):
+        if not TASK_ID.fullmatch(args.task_id):
             parser.error("invalid task ID")
         task = tasks / args.task_id
         if not task.is_dir() or task.is_symlink():
@@ -67,7 +69,7 @@ def main():
         items = []
         if tasks.is_dir():
             for task in sorted(tasks.iterdir()):
-                if task.is_dir() and not task.is_symlink() and re.fullmatch(r"\d{8}-[a-z0-9-]+", task.name):
+                if task.is_dir() and not task.is_symlink() and TASK_ID.fullmatch(task.name):
                     items.append({"id": task.name, "path": str(task)})
         print(json.dumps({"schema_version": 1, "tasks": items}, indent=2))
 

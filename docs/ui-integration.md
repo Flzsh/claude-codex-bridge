@@ -22,6 +22,8 @@ Run scripts with the project as the working directory and use the installed skil
 
 Each task is under `.multimodel/tasks/<task-id>/`. The UI can poll `task_status.py`. For a different project, use `task_status.py --repo <project-root> [task-id]`. The output is JSON with `schema_version: 1` and either `tasks` (list of IDs and paths) or `task` (ID, path, phase IDs and artifacts). Artifact paths are relative to the task directory. Each artifact has `present` and `bytes` and, for model runs with a recorded state, `run`.
 
+Treat task IDs as opaque, case-sensitive strings. New task IDs use an atomically allocated random alphanumeric suffix, which may contain uppercase letters. Existing task IDs remain valid.
+
 Model calls write an atomic `<output>.run.json` alongside their canonical output. Codex builds use `05-receipt-codex.md`. The run record contains `schema_version`, `state` (`running`, `succeeded`, `failed`), `exit_code` (null while running) and `updated_at` (UTC). Old tasks can lack records. If the controller is killed without a chance to clean up, a record may remain running; check the process before recovering a lock. Failed preflight checks may exit before creating a record, so always retain the subprocess exit code.
 
 Retries preserve per-attempt diagnostics in hidden directories alongside the artifact. Once a run starts, prior canonical output is archived. Successful model runs publish the new answer at the existing canonical path. Keep hidden directories private; prompts, logs and model outputs can contain project data.
