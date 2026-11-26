@@ -42,6 +42,8 @@ contextBridge.exposeInMainWorld('bridge', {
   companionToggle: call('companionToggle'),
   companionOpen: call('companionOpen'),
   deckNext: call('deckNext'),
+  setWorkflow: (workflow: unknown) => ipcRenderer.invoke('setWorkflow', workflow),
+  resetWorkflow: call('resetWorkflow'),
   tabs: call('tabs'),
   selectTab: (key: string) => ipcRenderer.invoke('selectTab', key),
   closeTab: (key: string) => ipcRenderer.invoke('closeTab', key),

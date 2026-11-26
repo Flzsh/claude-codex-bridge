@@ -8,6 +8,7 @@
 import { stagesFor, type Size } from '../../../../core/console'
 import { graphCell, layout, LANE, LANES, GAP, type Lane, type Step } from '../../../../core/flow'
 import { gateLeft, gateOptions, type Flow, type Frame, type Pane } from './controller'
+import { StepsEditor } from './steps'
 import { TabStrip, tabKey } from './tabs'
 import { JOIN, Term } from './term'
 import { C, clock, EIGHTHS, elapsed, fit, LINE, mix, shimmer, spin, took } from './termkit'
@@ -41,10 +42,14 @@ export class CliView {
   private readonly off: (() => void)[] = []
   /** The workflows' tabs, in the title bar. */
   private readonly tabs: TabStrip
+  /** The step editor, over the screen while open. */
+  private readonly steps: StepsEditor
+  private stepsWasOpen = false
 
   constructor(private readonly root: HTMLElement, private readonly flow: Flow) {
     root.classList.add('theme-cli')
     this.tabs = new TabStrip(document.querySelector('.titlebar') as HTMLElement, flow, 'cli')
+    this.steps = new StepsEditor(root, flow, 'cli')
     this.canvas = document.createElement('canvas')
     this.canvas.className = 'cli-screen'
     // The steer box's real text field: invisible, kept over the drawn box so typing and IME work.
@@ -62,6 +67,7 @@ export class CliView {
   destroy() {
     for (const off of this.off) off()
     this.tabs.destroy()
+    this.steps.destroy()
     this.root.classList.remove('theme-cli')
     this.canvas.remove()
     this.field.remove()
@@ -106,6 +112,7 @@ export class CliView {
     const empty = flow.input.trim() === ''
     const ctrl = event.ctrlKey || event.metaKey
     if (tabKey(event, flow)) return
+    if (flow.stepsOpen && event.key === 'Escape') { event.preventDefault(); flow.closeSteps(); return }
     if (ctrl && event.key.toLowerCase() === 'p') { event.preventDefault(); void flow.togglePause(); return }
     if (ctrl && event.key.toLowerCase() === 't') { event.preventDefault(); void flow.setTheme('drawn'); return }
     if (ctrl && event.key === ',') { event.preventDefault(); flow.setPane('settings'); return }
@@ -161,6 +168,11 @@ export class CliView {
     const { cols, rows } = term
     const t = frame.now
     this.tabs.render(t)
+    this.steps.render()
+    // while the editor is open, typing goes to it, not to the steer box behind it
+    if (flow.stepsOpen && document.activeElement === this.field) this.field.blur()
+    if (!flow.stepsOpen && this.stepsWasOpen) this.field.focus()
+    this.stepsWasOpen = flow.stepsOpen
     const DW = cols >= 120 ? Math.max(42, Math.min(76, Math.round(cols * 0.36))) : Math.max(34, Math.round(cols * 0.4))
     const W1 = cols - DW
     const paneBottom = rows - 6
@@ -180,7 +192,7 @@ export class CliView {
 
   private phases(): string[] {
     const size = (this.flow.info?.size ?? 'large') as Size
-    return stagesFor(['small', 'medium', 'large'].includes(size) ? size : 'large').map(stage => stage.label.toLowerCase())
+    return stagesFor(['small', 'medium', 'large'].includes(size) ? size : 'large', this.flow.settings?.workflow).map(stage => stage.label.toLowerCase())
   }
 
   private drawFlow(frame: Frame, W1: number, paneBottom: number) {
@@ -672,13 +684,15 @@ export class CliView {
     for (const path of st.recent.filter(p => p !== st.workdir).slice(0, 4)) row('', path, () => void flow.api.setWorkdir(path), C.dim)
     y++
     row('look', st.theme === 'cli' ? 'terminal' : 'drawn', () => void flow.setTheme(st.theme === 'cli' ? 'drawn' : 'cli'))
-    row('companion', st.companion === 'auto' ? 'shows while work runs' : 'off', () => void flow.api.companionToggle())
+    row('companion', st.companion === 'auto' ? 'shows while work runs' : st.companion === 'always' ? 'always on' : 'off', () => void flow.api.companionToggle())
     row('on top', st.pinned ? 'yes' : 'no', () => void flow.api.pin())
     y++
     row('codex model', st.codexModel, () => void flow.api.setModel(cycle(st.models, st.codexModel)))
     row('codex effort', st.efforts.codex ?? 'default', () => void flow.api.setEffort('codex', cycle([null, ...st.effortChoices.codex], st.efforts.codex)))
     row('codex edits', st.mode === 'workspace-write' ? 'may edit files' : 'read only', () => void flow.api.setMode(st.mode === 'workspace-write' ? 'read-only' : 'workspace-write'))
     row('gemini effort', st.efforts.gemini ?? 'default', () => void flow.api.setEffort('gemini', cycle([null, ...st.effortChoices.gemini], st.efforts.gemini)))
+    y++
+    row('steps', 'edit the steps ›', () => flow.openSteps(), C.claude)
     if (st.bashError) { y++; row('bash', st.bashError, null, C.red) }
     if (flow.flows.length > 1) {
       y++

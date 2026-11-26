@@ -7,6 +7,7 @@
 // On hover a small row opens above it: the step's name and Approve / Pause / Open.
 
 import { stagesFor, type Size } from '../../../core/console'
+import type { Workflow } from '../../../core/workflow'
 import { fold, LANE, type Lane, type Step } from '../../../core/flow'
 import { gateLeft, type FlowPayload, type Theme } from './flow/controller'
 import { boxPath, CLAY_UI, clamp, DEEP, esc, FILL, HATCH, INK, j, seedFrom } from './flow/ink'
@@ -15,7 +16,7 @@ import { C, mix, spin, SPIN } from './flow/termkit'
 type Claude = { state: 'thinking' | 'tool' | 'idle'; detail: string; since: number; t: number } | null
 /** Two or more workflows at once: how many, the cards behind the top one, and where the top one runs. */
 type Deck = { count: number; behind: { wait: boolean }[]; folder: string; title: string } | null
-type State = { visible: boolean; busy: boolean; theme: Theme; flow: FlowPayload; runs: { who: string; title: string; since: number }[]; claude: Claude; deck?: Deck }
+type State = { visible: boolean; busy: boolean; theme: Theme; flow: FlowPayload; runs: { who: string; title: string; since: number }[]; claude: Claude; deck?: Deck; workflow?: Workflow }
 type Companion = {
   on(event: 'companion' | 'companion-row', listener: (payload: unknown) => void): () => void
   companionOpen(): Promise<void>
@@ -51,7 +52,7 @@ function situation(at: number) {
   const info = state?.flow.flow ?? null
   const live = Boolean(info && info.state !== 'done' && (working.length || gate || (steps.length && at - Math.max(...steps.map(s => s.t1 ?? s.t0)) < 600)))
   const size = (info?.size ?? 'large') as Size
-  const phases = stagesFor(['small', 'medium', 'large'].includes(size) ? size : 'large').map(stage => stage.label)
+  const phases = stagesFor(['small', 'medium', 'large'].includes(size) ? size : 'large', state?.workflow).map(stage => stage.label)
   return { steps, working, gate, done, phase, phases, live }
 }
 

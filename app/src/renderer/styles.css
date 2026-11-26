@@ -200,3 +200,54 @@ html[data-theme='cli'] .titlebar { background: var(--term-bar); }
 .tabs-drawn .tab .x { color: var(--ink-3); }
 .tabs-drawn .tab .x:hover { color: var(--clay-ui); }
 .theme-drawn.has-tabs .d-top [data-key="status"], .theme-drawn.has-tabs .d-top [data-key="theme"] { display: none !important; }
+
+/* ---------------------------------------------------------------- the step editor */
+.steps { position: fixed; left: 0; right: 0; top: 34px; bottom: 0; z-index: 30; overflow: auto; padding: 16px 22px 22px; }
+.steps button { cursor: pointer; }
+.steps button:disabled { cursor: default; }
+.st-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
+.st-lane { display: flex; align-items: center; padding: 6px 0; }
+.st-sz { width: 70px; flex: none; }
+.st-line { display: flex; align-items: center; flex-wrap: wrap; row-gap: 6px; }
+.st-ln { width: 12px; flex: none; }
+.st-chip { white-space: nowrap; }
+.st-chip i { font-style: normal; }
+.st-add { margin-left: 10px; }
+.st-menu { display: flex; align-items: center; gap: 8px; margin: 2px 0 8px 70px; flex-wrap: wrap; }
+.st-detail { margin-top: 12px; padding: 10px 12px; }
+.st-kv { display: flex; align-items: center; gap: 8px; padding: 4px 0; flex-wrap: wrap; }
+.st-k { width: 150px; flex: none; }
+.st-right { margin-left: auto; display: flex; gap: 6px; }
+.st-label { width: 180px; }
+.st-foot { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 16px; }
+
+.steps-cli { background: var(--term); color: #d4cec2; font: 12.5px/20px var(--mono); }
+.steps-cli .st-top { color: #8b857a; } .steps-cli .st-x { color: #d4cec2; border: 1px solid #3a3732; padding: 0 8px; border-radius: 3px; }
+.steps-cli .st-sz, .steps-cli .st-k, .steps-cli .st-d, .steps-cli .st-foot span { color: #8b857a; }
+.steps-cli .st-ln { border-top: 1px solid #56524b; }
+.steps-cli .st-chip, .steps-cli .st-opt, .steps-cli .st-who { border: 1px solid #3a3732; border-radius: 4px; padding: 0 7px; color: #d4cec2; font: inherit; }
+.steps-cli .st-chip.on { border-color: #d9825b; background: #221f1c; }
+.steps-cli .st-chip.gate { border-color: #e3b15a; }
+.steps-cli .st-opt.on, .steps-cli .st-who.on { border-color: #d9825b; background: #221f1c; color: #f3eee4; }
+.steps-cli .st-who:disabled { color: #56524b; }
+.steps-cli .st-add { color: #56524b; } .steps-cli .st-add:hover { color: #d4cec2; }
+.steps-cli .st-detail { border: 1px solid #3a3732; border-radius: 4px; }
+.steps-cli .st-label { background: #1f1d1a; color: #f3eee4; border: 1px solid #3a3732; border-radius: 3px; font: inherit; padding: 0 6px; }
+.steps-cli .st-del:hover { color: #df6b5e; }
+.steps-cli .st-note { color: #e3b15a; }
+.steps-cli .w-you { color: #7ea6d8; } .steps-cli .w-claude { color: #d9825b; } .steps-cli .w-gemini { color: #a98ddc; } .steps-cli .w-codex { color: #84bf7d; }
+.steps-cli .st-g, .steps-cli .st-chip.gate .w-you { color: #e3b15a; } .steps-cli .st-n { color: #8b857a; }
+
+.steps-drawn { background: var(--paper); color: var(--ink); font: 14px/22px var(--serif); }
+.steps-drawn .st-top span { font-weight: 700; font-size: 17px; }
+.steps-drawn .st-sz, .steps-drawn .st-k, .steps-drawn .st-d, .steps-drawn .st-foot span { color: var(--ink-3); font-style: italic; }
+.steps-drawn .st-ln { border-top: 1.3px solid var(--ink); }
+.steps-drawn .st-chip, .steps-drawn .st-opt, .steps-drawn .st-who, .steps-drawn .st-x { border: 1.3px solid var(--ink); border-radius: 8px; padding: 1px 9px; background: #fffdf8; color: var(--ink); font: inherit; box-shadow: 1.5px 2px 0 rgba(20,20,19,.12); }
+.steps-drawn .st-chip.on, .steps-drawn .st-opt.on, .steps-drawn .st-who.on { background: #efc3ae; }
+.steps-drawn .st-chip.gate { background: #f3e3bf; }
+.steps-drawn .st-who:disabled { color: var(--ink-3); border-style: dashed; box-shadow: none; }
+.steps-drawn .st-add { color: var(--ink-3); font-style: italic; }
+.steps-drawn .st-detail { border: 1.3px solid var(--ink); border-radius: 10px; background: #fffdf8; }
+.steps-drawn .st-label { border: 1.3px solid var(--ink); border-radius: 6px; font: inherit; padding: 0 6px; background: var(--paper); }
+.steps-drawn .st-chip i { color: var(--ink-3); } .steps-drawn .st-note { color: #a86f14; }
+.steps-drawn { top: 62px; border-top: 1.3px solid var(--ink); }

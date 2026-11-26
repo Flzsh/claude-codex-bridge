@@ -14,6 +14,7 @@ import type { SidebarState } from '../types'
 import { bashPath } from '../core/console'
 import { currentFlow, ofFlow, parseFlow, type FlowEvent } from '../core/flow'
 import { ago, emptyAlt, emptySvg, lastFlow, PANE_THEME, paneAlt, paneModel, paneSvg, pictureWidth, type EmptyModel } from '../core/pane'
+import { parseWorkflow, type Workflow } from '../core/workflow'
 import { IDLE_H, SIDEBAR_W, sidebarView, type FlowHead, type Look } from '../core/sidebar'
 import { findBash, openConsole } from './console-pane'
 import { openApp } from './launch'
@@ -84,6 +85,16 @@ async function readLook($: EngineInterface): Promise<Look> {
   }
 }
 
+/** The owner's steps (the app's step editor writes them), else the defaults. */
+async function readWorkflow($: EngineInterface): Promise<Workflow> {
+  try {
+    const file = `${root}/workflow.json`
+    return parseWorkflow((await $.fs.exists(file)) ? await readText($, file) : null)
+  } catch {
+    return parseWorkflow(null)
+  }
+}
+
 /** The flow file's events, read again only when the file changed. */
 async function readEvents($: EngineInterface): Promise<FlowEvent[]> {
   const file = `${cwd}/.bridge/flow.jsonl`
@@ -143,10 +154,11 @@ export async function pollSidebar($: EngineInterface) {
   // paused by the flow's own pause, or a shared one (older builds)
   let paused = false
   for (const dir of controlDirs(id)) if (await $.fs.exists(`${dir}/pause.json`)) paused = true
-  const view = sidebarView(mine, head, paused, now)
+  const workflow = await readWorkflow($)
+  const view = sidebarView(mine, head, paused, now, workflow)
   const status = currentStatus()
   const busy = status.state !== 'idle'
-  const model = view ? paneModel(mine, head, paused, now, busy) : null
+  const model = view ? paneModel(mine, head, paused, now, busy, workflow) : null
 
   // with no workflow: the shape of one, waiting for you, then the last one and the last runs
   const empty: EmptyModel | null = model

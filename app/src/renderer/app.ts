@@ -10,6 +10,8 @@ import { DrawnView } from './flow/drawn'
 const bridge = (window as unknown as { bridge: BridgeApi }).bridge
 const root = document.getElementById('app') as HTMLElement
 const flow = new Flow(bridge)
+// for the development capture (BRIDGE_SHOT_DIR): it opens screens the way a click would
+;(window as unknown as { __bridgeFlow: Flow }).__bridgeFlow = flow
 
 type View = { render(): void; destroy(): void }
 let view: View | null = null

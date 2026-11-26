@@ -63,6 +63,8 @@ A full workflow on a small task is waste; none on a large one is risk. At the st
 
 When unsure between two sizes, take the smaller and say you will step up if it grows; when a task grows mid-way, step up and say so (the project's stage moves to the nearest step of the new size).
 
+**The steps are the owner's.** The table above is the default; the owner can change each size's steps in Bridge (Settings › Steps): add, remove or reorder steps, who does each, how much Codex builds, how many review rounds, and where they review. After picking the size, run `bash "<this skill's base directory>/flow.sh" steps <size>` and follow what it prints, one line per step: its number (the `--phase` number), its kind, its name, who does it, and the details (`codex builds every backend block`, `2 review rounds`, `you review after it: carries on after the wait` for a timed gate, `needs your yes` for `--no-auto`). Where it differs from this page, it wins. Claude still leads every size, checks every result, and asks before any commit, push or publish, whatever the steps say.
+
 **Large, step by step:**
 
 1. **Two plans, written apart.** Write your plan to a file first. Then send Gemini the request and the relevant files, without your plan, and ask for its own.
@@ -92,7 +94,7 @@ bash "$F" meter build-c 3 7 files                                    # a count t
   - Each step has an id you choose, a lane (`you`, `claude`, `gemini`, `codex`) and a state (`running`, `done`, `failed`).
   - The title is short and lower case: "writing a plan", then "wrote a plan" when done.
   - `--after a,b` draws the lines from the steps it follows.
-  - `--phase N` is the workflow step, counted from 0. For large: 0 ask, 1 two plans, 2 merge, 3 decide, 4 build, 5 review, 6 check & ship.
+  - `--phase N` is the workflow step, counted from 0, as `flow.sh steps <size>` numbers them. With the default steps, large is 0 ask, 1 two plans, 2 merge, 3 decide, 4 build, 5 review, 6 check & ship.
   - Give a running step a `--progress` of a few words and, where there is one, a `meter`.
 - **Codex and Gemini runs join by themselves.** Set `BRIDGE_STEP=<id>`, `BRIDGE_AFTER=<ids>` and `BRIDGE_PHASE=<n>` (optionally `BRIDGE_STEP_TITLE`) on the pyr.sh / agy.sh command. Their box goes from running to done or failed, and Codex's own actions show live.
 - **The review gate.** Where the user decides (after the merge, before a push), run `bash "$F" gate <id> "review the plan" --summary "<n points · n choices>" --after <merge-id> --phase 3` with a Bash timeout of 10 minutes. It blocks while the user reads, and prints one of:

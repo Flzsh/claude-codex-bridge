@@ -3,6 +3,7 @@ runs/
 *.log
 .DS_Store
 settings.json
+workflow.json
 .bridge/
 app/node_modules/
 app/dist/

@@ -11,6 +11,7 @@
 
 import { fold, focusAt, GAP, graphCell, LANES, layout, type FlowEvent, type Lane, type Step } from './flow'
 import { boxPath, C, CLAY_UI, DEEP, esc, FILL, GHOST, INK, linePath, mix, NAME, seedFrom } from './paint'
+import type { Workflow } from './workflow'
 import { countdown, f, fit, MONO, SERIF, SIDEBAR_W, sidebarView, spinner, type FlowHead, type Look, type PhaseRow } from './sidebar'
 
 const U = 1, D = 2, Lt = 4, Rt = 8
@@ -71,8 +72,8 @@ const duration = (s: number) => (s < 60 ? `${Math.max(1, Math.round(s))}s` : s <
 /** The pane's model of the flow, or null when there is none worth showing. */
 /** `busy`: Claude is at work. Between steps, when no step runs, the flow then ends in a row of
  * Claude working, so the picture never stands still while Claude does. */
-export function paneModel(events: readonly FlowEvent[], head: FlowHead | null, paused: boolean, at: number, busy = false): PaneModel | null {
-  const view = sidebarView(events, head, paused, at)
+export function paneModel(events: readonly FlowEvent[], head: FlowHead | null, paused: boolean, at: number, busy = false, workflow?: Workflow): PaneModel | null {
+  const view = sidebarView(events, head, paused, at, workflow)
   if (!view || !head) return null
   const steps = fold(events, at)
   const focus = view.finished ? null : focusAt(events, steps, at).id
@@ -119,9 +120,27 @@ export function paneModel(events: readonly FlowEvent[], head: FlowHead | null, p
   if (busy && !paused && !view.finished && !rows.some(r => r.kind === 'step' && (r.state === 'running' || r.state === 'waiting')))
     rows.push({ kind: 'step', id: '~claude', lane: 'claude', title: 'working on the next step', state: 'running', gate: false, steer: false, right: '', focus: false, meter: null, cells: [] })
   // the line into each working step (a row per layout line, so its cells name rows)
+  // from the node it comes out of: the layout's path starts a row below it
+  const nodeRow = (id: string) => rows.findIndex(r => r.kind === 'step' && r.id === id)
+  const colOf = (lane: Lane) => LANES.indexOf(lane) * GAP
   let flows: PaneFlow[] = [...steps.values()]
-    .filter(st => st.state === 'running' && st.path && st.path.length > 1)
-    .map(st => ({ lane: st.lane, cells: st.path!.map(([line, x]): [number, number] => [line, x]) }))
+    .filter(st => st.state === 'running' && nodeRow(st.id) >= 0)
+    .map(st => {
+      const cells = (st.path ?? []).map(([line, x]): [number, number] => [line, x])
+      const own = nodeRow(st.id)
+      // the parent whose line the layout drew: in the column the path starts in, above it
+      const top = cells[0]?.[0] ?? own
+      const from = st.after
+        .map(id => steps.get(id))
+        .filter((one): one is Step => one !== undefined && nodeRow(one.id) >= 0 && nodeRow(one.id) < top)
+        .find(one => cells.length === 0 || colOf(one.lane) === cells[0]![1])
+      if (from) cells.unshift([nodeRow(from.id), colOf(from.lane)], ...(cells.length ? [[cells[0]![0], colOf(from.lane)] as [number, number]] : []))
+      // and on into the step's own node
+      const last = cells[cells.length - 1]
+      if (!last || last[0] !== own || last[1] !== colOf(st.lane)) cells.push([own, colOf(st.lane)])
+      return { lane: st.lane, cells }
+    })
+    .filter(one => one.cells.length > 1)
   // a long flow keeps its newest rows
   let earlier = 0
   if (rows.length > MAX_ROWS) {
@@ -233,7 +252,7 @@ type Skin = {
   focusRow: (x: number, y: number, w: number, h: number, lane: Lane, gate: boolean, key: string) => string
   /** A bar that loads under a working step. */
   loading: (x: number, y: number, w: number, lane: Lane, meter: [number, number] | null, key: string) => string
-  /** Liquid running along a line (points from where it starts to the step it feeds). */
+  /** The pulse running down a line into the step it feeds (points from where the line starts). */
   liquid: (points: [number, number][], lane: Lane, key: string) => string
   /** The line from the first step to the step now, lit, with a light running along it. */
   sweep: (x1: number, y: number, x2: number, colour: string, run: boolean, key: string) => string
@@ -303,11 +322,16 @@ const cli: Skin = {
     return out
   },
   pulse: (x, y, colour) => `<circle cx="${f(x)}" cy="${f(y)}" r="3" fill="${colour}"><animate attributeName="opacity" values="1;.25;1" dur="1.2s" repeatCount="indefinite"/></circle>`,
-  // a lit pipe, and the agent's colour running down it toward the step
+  // as the app's terminal look: a pulse runs down the line, a bright head and a fading tail, rests, and runs again
   liquid: (points, lane) => {
     const d = polyline(points)
-    return `<path d="${d}" fill="none" stroke="${C[lane]}" stroke-opacity=".26" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>`
-      + `<path d="${d}" fill="none" stroke="${C[lane]}" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="14 5 3 5"><animate attributeName="stroke-dashoffset" from="27" to="0" dur=".9s" repeatCount="indefinite"/></path>`
+    const { move, total } = pulseTiming(points)
+    const at = (move / total).toFixed(3)
+    // dashes in a path of length 1: each one's front runs from the line's start to past its end
+    const dash = (len: number, colour: string, width: number, opacity: number) =>
+      `<path d="${d}" pathLength="1" fill="none" stroke="${colour}" stroke-opacity="${opacity}" stroke-width="${width}" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="${len} 3" stroke-dashoffset="${len}">`
+      + `<animate attributeName="stroke-dashoffset" values="${len};${(len - 1.05).toFixed(3)};${(len - 1.05).toFixed(3)}" keyTimes="0;${at};1" dur="${total.toFixed(2)}s" repeatCount="indefinite"/></path>`
+    return `<g class="pulse">${dash(0.3, C[lane], 2, 0.3)}${dash(0.16, C[lane], 2.2, 0.6)}${dash(0.06, mix(C[lane], C.bright, 0.5), 2.8, 1)}</g>`
   },
 }
 
@@ -394,11 +418,14 @@ const drawn: Skin = {
     return out
   },
   pulse: (x, y) => `<circle cx="${f(x)}" cy="${f(y)}" r="3.2" fill="${FILL.clay}" stroke="${INK}" stroke-width=".9"><animate attributeName="r" values="3.2;2.2;3.2" dur="1.2s" repeatCount="indefinite"/></circle>`,
-  // a wash in the agent's colour along the line, and ink running down it toward the step
+  // as the app's drawn look: a bead of ink runs down the line into the step, rests, and runs again
   liquid: (points, lane) => {
-    const d = polyline(points)
-    return `<path d="${d}" fill="none" stroke="${FILL[lane]}" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>`
-      + `<path d="${d}" fill="none" stroke="${DEEP[lane]}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="13 5 3 6"><animate attributeName="stroke-dashoffset" from="27" to="0" dur="1s" repeatCount="indefinite"/></path>`
+    const d = polyline(points, 5.5)
+    const { move, total } = pulseTiming(points)
+    const at = (move / total).toFixed(3)
+    const motion = `<animateMotion path="${d}" keyPoints="0;1;1" keyTimes="0;${at};1" calcMode="linear" dur="${total.toFixed(2)}s" repeatCount="indefinite"/>`
+    const fade = `<animate attributeName="opacity" values="0;1;1;0;0" keyTimes="0;0.06;${(Number(at) * 0.92).toFixed(3)};${at};1" dur="${total.toFixed(2)}s" repeatCount="indefinite"/>`
+    return `<g class="pulse"><circle r="3" fill="${FILL[lane]}" stroke="${DEEP[lane]}" stroke-width="1.2" opacity="0">${motion}${fade}</circle></g>`
   },
 }
 
@@ -480,8 +507,16 @@ function laneNames(skin: Skin, W: number, y: number, text: (x: number, y: number
   return { svg, rows: oneLine ? 1 : 2 }
 }
 
+/** How long the pulse takes down a line and the rest after it, in seconds: an even pace, as the app's. */
+function pulseTiming(points: [number, number][]): { move: number; total: number } {
+  let length = 0
+  for (let i = 1; i < points.length; i++) length += Math.hypot(points[i]![0] - points[i - 1]![0], points[i]![1] - points[i - 1]![1])
+  const move = Math.max(0.45, Math.min(2.4, length / 170))
+  return { move, total: move + 0.6 }
+}
+
 /** A path through the points, each end drawn back by `trim` so it stops at the nodes' edges. */
-function polyline(points: [number, number][], trim = 6): string {
+function polyline(points: [number, number][], trim = 4.5): string {
   const pts = points.filter((pt, i) => i === 0 || pt[0] !== points[i - 1]![0] || pt[1] !== points[i - 1]![1]).map(pt => [...pt] as [number, number])
   const pull = (a: [number, number], b: [number, number]) => {
     const len = Math.hypot(b[0] - a[0], b[1] - a[1])

@@ -1,6 +1,6 @@
 # claude-codex-bridge
 
-A Claude Code plugin that lets Claude hand routine work to OpenAI Codex, so your ChatGPT plan does the token-heavy work and your Claude usage goes further, without lowering quality. It can also ask Gemini (through Google's Antigravity CLI) for an independent second plan and a review of interaction and copy. Since 0.3.0 the three share a project folder, so what one learns the others see, and a desktop app, **Bridge**, is the command center: you watch the workflow happen live, lane by lane, review a plan when it is ready (it carries on by itself after 30 seconds), and steer, pause or decline at any point. Since 0.4.0 the same workflow shows in the Bridge pane beside the chat in Claude Code, drawn in the app's look. Since 0.5.0 Bridge follows every workflow at once, in any folder or session: a tab for each, like a browser, and the companion stacks them like a deck.
+A Claude Code plugin that lets Claude hand routine work to OpenAI Codex, so your ChatGPT plan does the token-heavy work and your Claude usage goes further, without lowering quality. It can also ask Gemini (through Google's Antigravity CLI) for an independent second plan and a review of interaction and copy. Since 0.3.0 the three share a project folder, so what one learns the others see, and a desktop app, **Bridge**, is the command center: you watch the workflow happen live, lane by lane, review a plan when it is ready (it carries on by itself after 30 seconds), and steer, pause or decline at any point. Since 0.4.0 the same workflow shows in the Bridge pane beside the chat in Claude Code, drawn in the app's look. Since 0.5.0 Bridge follows every workflow at once, in any folder or session: a tab for each, like a browser, and the companion stacks them like a deck. Since 0.6.0 the steps of each workflow size are yours to edit.
 
 ```
 Claude (plans, routes, checks the result, writes the frontend)
@@ -24,6 +24,8 @@ Claude sizes every task first and tells you which size it picked; you can change
 
 In every size nothing is committed, pushed or published without your yes. Without Antigravity CLI, Gemini's parts are skipped.
 
+These are the default steps. Change them in Bridge under **Settings › Steps**: each size is a line of steps, the way the flow shows them. Click a step to set who does it, how much Codex builds, how many review rounds, and whether you review after it (a review that carries on after the wait, or one that needs your yes); add, move or remove steps. "Ask" stays first and "Check & ship" last, Claude always plans, merges and checks, and Gemini never builds (it can't edit files). Your steps are saved in `workflow.json` in the plugin folder; the app, the companion and the Claude Code pane show them, and Claude follows them (`flow.sh steps <size>` prints them).
+
 ## What's inside
 
 The plugin has five parts:
@@ -44,7 +46,7 @@ The command center for the three agents. You start in Claude as always; when Cla
 - **The steer box** at the bottom: plain text goes to Claude (picked up at its next step while it works, or as a new prompt when it is idle); start with `@codex` or `@gemini` to ask that agent directly, and its run appears in its lane.
 - **The side pane**: the selected step (progress, brief, result), a page per agent, and the settings (folder, look, companion, Codex model and effort, whether Codex may edit files).
 - **Two looks**: a terminal program, and a hand-drawn one. Switch with Ctrl+T or in the settings.
-- **The companion bar**: a small bar that floats over other windows while anything works or waits for you, with Approve and Pause right in it. Hover it for the steps and the latest events. With several workflows it is a deck: the one that needs you is on top, the others peek behind it, and the count on its corner brings the next one up. Its buttons answer the card on top; click the card to open its tab.
+- **The companion bar**: a small bar that floats over other windows while anything works or waits for you, with Approve and Pause right in it. Hover it for the steps and the latest events. With several workflows it is a deck: the one that needs you is on top, the others peek behind it, and the count on its corner brings the next one up. Its buttons answer the card on top; click the card to open its tab. Set it to **always on** in the settings to keep it up even when nothing runs, so you can follow every workflow and agent without the Claude app.
 - **The review queue**: when reviews that carry on by themselves wait in several workflows at once, only the one on top counts down; the others wait their turn and get their full 30 seconds when it comes, so nothing is approved while you can't see it.
 
 Claude writes the flow with `skills/codex-bridge/flow.sh` (the skill says when); Codex and Gemini runs join it by themselves. Everything is in `.bridge/flow.jsonl` in your project, one line per event, plus `.bridge/control/` for your answers.

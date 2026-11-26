@@ -2,6 +2,7 @@ import { describe as group, expect, test } from 'claude-code/testing'
 
 import type { FlowEvent } from './flow'
 import { QUIET_AFTER, sidebarAlt, sidebarView, type FlowHead } from './sidebar'
+import { normalizeWorkflow } from './workflow'
 
 const head: FlowHead = { id: 'f1', title: 'turn Bridge into the command center', size: 'large', state: null }
 const flow: FlowEvent[] = [
@@ -22,6 +23,17 @@ const flow: FlowEvent[] = [
 ]
 
 group('the sidebar view', () => {
+  test('uses the configured steps for this flow size', () => {
+    const workflow = normalizeWorkflow({ v: 1, sizes: { large: [
+      { kind: 'ask', label: 'Your request', who: ['you'] },
+      { kind: 'review', label: 'Check the diff', who: ['codex'] },
+      { kind: 'ship', label: 'Deliver', who: ['claude', 'you'] },
+    ] } })
+    const view = sidebarView(flow.slice(0, 1), head, false, 4, workflow)!
+    expect(view.phases.map(p => p.label)).toEqual(['Your request', 'Check the diff', 'Deliver'])
+    expect(view.phases.map(p => p.state)).toEqual(['now', 'next', 'next'])
+  })
+
   test('a review waiting: the step now is Decide, the steps before are done, the review is yours', () => {
     const view = sidebarView(flow, head, false, 30)!
     expect(view.phase).toBe(3)

@@ -3,6 +3,7 @@
 // calls these actions; nothing here knows how it looks.
 
 import { fold, focusAt, LANE, type FlowEvent, type Lane, type Step } from '../../../../core/flow'
+import type { Workflow } from '../../../../core/workflow'
 
 /** How many events have happened by t (events are sorted by time). */
 function countBy(events: readonly FlowEvent[], t: number): number {
@@ -25,7 +26,7 @@ export type Settings = {
   mode: 'read-only' | 'workspace-write'
   efforts: Record<Provider, string | null>
   effortChoices: Record<Provider, string[]>
-  companion: 'auto' | 'off'
+  companion: 'auto' | 'always' | 'off'
   theme: Theme
   bashError: string
   /** What became of the last message the box sent Claude. */
@@ -34,6 +35,8 @@ export type Settings = {
   claudeHere: boolean
   /** That session is at work (thinking or using a tool). */
   claudeBusy?: boolean
+  /** The owner's steps for each size (the step editor's), else the defaults. */
+  workflow?: Workflow
 }
 export type RunDetail = { brief: string; reply: string; logTail: string }
 
@@ -57,6 +60,8 @@ export type BridgeApi = {
   selectTab(key: string): Promise<{ error?: string }>
   closeTab(key: string): Promise<unknown>
   reopenTab(): Promise<{ error?: string }>
+  setWorkflow(workflow: Workflow): Promise<{ error?: string }>
+  resetWorkflow(): Promise<unknown>
   answerGate(gate: string, answer: GateAnswer, text?: string, t0?: number): Promise<{ ok?: boolean; taken?: boolean; error?: string }>
   setPaused(paused: boolean): Promise<{ ok?: boolean; error?: string }>
   steer(text: string): Promise<{ ok?: boolean; error?: string; route?: string }>
@@ -125,6 +130,8 @@ export class Flow {
   input = ''
   /** The window's tabs, in order. */
   tabs: TabInfo[] = []
+  /** The step editor is open (from the settings). */
+  stepsOpen = false
   notice: { text: string; at: number } | null = null
   private runs = new Map<string, RunDetail | 'loading'>()
   private listeners = new Set<() => void>()
@@ -160,6 +167,30 @@ export class Flow {
 
   closeTab(key: string) {
     void this.api.closeTab(key)
+  }
+
+  openSteps() {
+    this.stepsOpen = true
+    this.changed()
+  }
+
+  closeSteps() {
+    this.stepsOpen = false
+    this.changed()
+  }
+
+  /** Saves the owner's steps (main checks them against the rules and sends them back). */
+  saveWorkflow(workflow: Workflow): Promise<void> {
+    return this.api.setWorkflow(workflow).then(result => {
+      if (result?.error) this.say(result.error)
+    })
+  }
+
+  resetWorkflow() {
+    void this.api.resetWorkflow().then(result => {
+      const error = (result as { error?: string } | undefined)?.error
+      if (error) this.say(error)
+    })
   }
 
   /** The tab closed last, back (Ctrl+Shift+T). */

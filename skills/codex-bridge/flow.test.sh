@@ -111,6 +111,69 @@ await_event() {
   ' "$@"
 }
 
+steps_error="$scratch/steps-error"
+assert_steps() {
+  local size="$1" workflow="$2" expected="$3"
+  local expected_output="$scratch/steps-expected"
+  printf '%s\n' "$expected" > "$expected_output"
+  BRIDGE_WORKFLOW_FILE="$workflow" flow steps "$size" > "$output" 2> "$steps_error" ||
+    fail "steps $size failed: $(cat -- "$steps_error")"
+  diff -u -- "$expected_output" "$output" || fail "unexpected steps $size output"
+}
+
+default_small='0 ask | Ask | You | -
+1 build | Do | Claude | -
+2 ship | Check | Claude, You | -'
+default_medium='0 ask | Ask | You | -
+1 plan | Plan | Claude | -
+2 build | Build | Claude, Codex | codex builds one bounded block
+3 review | Review | Codex, Gemini | 1 review round
+4 ship | Check & ship | Claude, You | -'
+default_large='0 ask | Ask | You | -
+1 plan | Two plans | Claude, Gemini | -
+2 merge | Merge | Claude | -
+3 decide | Decide | You | you review after it: carries on after the wait
+4 build | Build | Claude, Codex | codex builds every backend block, claude the UI
+5 review | Review | Gemini, Codex | 2 review rounds
+6 ship | Check & ship | Claude, You | -'
+
+missing_workflow="$native_workdir/missing-workflow.json"
+assert_steps small "$missing_workflow" "$default_small"
+assert_steps medium "$missing_workflow" "$default_medium"
+assert_steps large "$missing_workflow" "$default_large"
+
+cat > "$BRIDGE_WORKDIR/custom-workflow.json" <<'JSON'
+{"v":1,"sizes":{"medium":[
+  {"kind":"ask","label":"Ask","who":["you"]},
+  {"kind":"plan","label":"Plan","who":["claude"]},
+  {"kind":"build","label":"Build backend","who":["codex"],"codex":"all","gate":"yes"},
+  {"kind":"review","label":"Gemini review","who":["gemini"],"rounds":2},
+  {"kind":"ship","label":"Check & ship","who":["claude","you"]}
+]}}
+JSON
+assert_steps medium "$native_workdir/custom-workflow.json" '0 ask | Ask | You | -
+1 plan | Plan | Claude | -
+2 build | Build backend | Codex | codex builds every backend block; you review after it: needs your yes
+3 review | Gemini review | Gemini | 2 review rounds
+4 ship | Check & ship | Claude, You | -'
+
+printf '%s\n' '{' > "$BRIDGE_WORKDIR/bad-workflow.json"
+assert_steps large "$native_workdir/bad-workflow.json" "$default_large"
+grep -iq default "$steps_error" || fail "missing default note for malformed JSON: $(cat -- "$steps_error")"
+
+cat > "$BRIDGE_WORKDIR/invalid-workflow.json" <<'JSON'
+{"v":1,"sizes":{"medium":[
+  {"kind":"ask","label":"Ask","who":["you"]},
+  {"kind":"plan","label":"Plan","who":["claude"]},
+  {"kind":"build","label":"Build","who":["claude"]},
+  {"kind":"review","label":"Review","who":["gemini"],"rounds":3},
+  {"kind":"ship","label":"Check & ship","who":["claude","you"]}
+]}}
+JSON
+assert_steps medium "$native_workdir/invalid-workflow.json" "$default_medium"
+grep -iq default "$steps_error" || fail "missing default note for invalid medium: $(cat -- "$steps_error")"
+[[ ! -e "$control" ]] || fail 'steps created the control directory'
+
 special=$'"quoted" \\ path\n中文 ✓\r\nsecond line'
 equal "$(flow check)" ''
 [[ -d "$control" ]] || fail 'check did not create the control directory'
@@ -500,6 +563,19 @@ if make_registry_link file-registry-target "file-registry/$first.json" file; the
     fail 'step wrote through the registry file link'
 else
   printf '%s\n' 'SKIP: registry file symlinks unavailable'
+fi
+
+if make_registry_link 'work with spaces/custom-workflow.json' 'work with spaces/linked-workflow.json' file; then
+  assert_steps medium "$native_workdir/linked-workflow.json" "$default_medium"
+  grep -iq symlink "$steps_error" || fail "missing symlink refusal: $(cat -- "$steps_error")"
+else
+  printf '%s\n' 'SKIP: workflow file symlinks unavailable'
+fi
+if make_registry_link 'work with spaces' linked-workflow-dir dir; then
+  assert_steps medium "${native_workdir%/*}/linked-workflow-dir/custom-workflow.json" "$default_medium"
+  grep -iq symlink "$steps_error" || fail "missing directory symlink refusal: $(cat -- "$steps_error")"
+else
+  printf '%s\n' 'SKIP: workflow directory symlinks unavailable'
 fi
 
 printf '%s\n' 'flow.sh tests passed'

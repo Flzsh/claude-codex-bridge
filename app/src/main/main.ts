@@ -3,13 +3,15 @@
 // touched here; the window reaches them through preload.ts.
 
 import { app, BrowserWindow, dialog, ipcMain, Menu, Notification, screen, shell } from 'electron'
+import { randomBytes } from 'node:crypto'
 import { existsSync, statSync, watch, type FSWatcher } from 'node:fs'
-import { mkdir, readdir, readFile, stat, unlink, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, readdir, readFile, rename, rm, stat, unlink, writeFile } from 'node:fs/promises'
 import { basename, join, resolve } from 'node:path'
 
 import type { Job, Provider } from '../../../types'
 import { CODEX_MODELS, shortTitle, SIZES, type Size, STAGES } from '../../../core/console'
 import { fold } from '../../../core/flow'
+import { DEFAULT_WORKFLOW, normalizeWorkflow, parseWorkflow, type Workflow as Steps } from '../../../core/workflow'
 import { EFFORTS, providerName } from '../../../core/jobs'
 import { findBash } from './bash'
 import { answerGate, flowPayload, isLive, queuePause, safeId, setPaused, steerClaude, steerStep, type FlowPayload } from './flow'
@@ -70,7 +72,7 @@ type Config = {
   codexModel: string
   mode: Mode
   /** The companion bar: shown while anything runs ('auto'), or never ('off'). */
-  companion: 'auto' | 'off'
+  companion: 'auto' | 'always' | 'off'
   /** Where the companion bar was left (its window's top-left), or null for the default corner. */
   companionAt: { x: number; y: number } | null
   /** The look: a terminal program, or drawn by hand. */
@@ -118,6 +120,7 @@ const configFile = () => join(app.getPath('userData'), 'bridge.json')
 async function loadConfig() {
   try {
     config = { ...DEFAULT_CONFIG, ...(JSON.parse(await readFile(configFile(), 'utf8')) as Partial<Config>) }
+    if (!['auto', 'always', 'off'].includes(config.companion)) config.companion = 'auto'
   } catch {
     config = { ...DEFAULT_CONFIG }
   }
@@ -217,6 +220,7 @@ async function snapshot() {
     delivery,
     claudeHere,
     claudeBusy,
+    workflow,
     threads: {
       codex: { continuing: Boolean(threads.codex.session), running: running.get('codex')?.startedAt ?? null },
       gemini: { continuing: Boolean(threads.gemini.session), running: running.get('gemini')?.startedAt ?? null },
@@ -313,6 +317,11 @@ async function sweep() {
     // A file mid-write: the next sweep reads it.
   }
   await readWorkflows().catch(() => undefined)
+  // the owner's steps, edited here or by hand
+  if (await readWorkflowFile().catch(() => false)) {
+    send('state', await snapshot())
+    lastCompanion = ''
+  }
   latestClaude = await readClaudeStatus(config.workdir)
   await checkDelivery()
   const here = latestClaude?.here === true
@@ -324,6 +333,52 @@ async function sweep() {
     send('state', await snapshot())
   }
   void updateCompanion()
+}
+
+// ------------------------------------------------- the owner's steps for each size
+
+/** The owner's steps (the step editor writes them); without the file, the defaults. */
+const WORKFLOW_FILE = join(PLUGIN_ROOT, 'workflow.json')
+let workflow: Steps = DEFAULT_WORKFLOW
+
+/** Reads the owner's steps (never through a link); true when they changed. A file edited by hand
+ * that breaks the rules is repaired and written back, so Claude's flow.sh reads the same steps. */
+async function readWorkflowFile(): Promise<boolean> {
+  const info = await lstat(WORKFLOW_FILE).catch(() => null)
+  const text = info && info.isFile() ? await readFile(WORKFLOW_FILE, 'utf8').catch(() => null) : null
+  const next = parseWorkflow(text)
+  let raw: unknown = undefined
+  try {
+    raw = text === null ? undefined : JSON.parse(text)
+  } catch {
+    // not JSON: left as it is (flow.sh and the app both use the defaults)
+  }
+  const changed = JSON.stringify(next) !== JSON.stringify(workflow)
+  if (raw !== undefined && JSON.stringify(raw) !== JSON.stringify(next)) await saveWorkflowFile(next).catch(() => undefined)
+  workflow = next
+  return changed
+}
+
+let workflowWrites: Promise<unknown> = Promise.resolve()
+
+/** Saves the owner's steps, checked against the rules, in one move (never through a link); one
+ * save at a time, each to a fresh temp file made only if nothing is there. */
+function saveWorkflowFile(value: unknown): Promise<void> {
+  const write = workflowWrites.then(async () => {
+    if ((await lstat(WORKFLOW_FILE).catch(() => null))?.isSymbolicLink()) throw new Error('workflow.json is a link; Bridge does not write through links')
+    const next = normalizeWorkflow(value)
+    const temp = `${WORKFLOW_FILE}.tmp-${randomBytes(6).toString('hex')}`
+    await writeFile(temp, JSON.stringify(next, null, 2) + '\n', { encoding: 'utf8', flag: 'wx' })
+    try {
+      await rename(temp, WORKFLOW_FILE)
+    } catch (error) {
+      await rm(temp, { force: true })
+      throw error
+    }
+    workflow = next
+  })
+  workflowWrites = write.catch(() => undefined)
+  return write
 }
 
 // ------------------------------------------------- every workflow, in every folder
@@ -789,6 +844,27 @@ function wireIpc() {
     void updateCompanion()
     send('state', await snapshot())
   })
+  // the step editor: every change saved at once, checked against the rules
+  handle('setWorkflow', async (value: unknown) => {
+    try {
+      await saveWorkflowFile(value)
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : String(error) }
+    }
+    send('state', await snapshot())
+    lastCompanion = ''
+    void updateCompanion()
+    return {}
+  })
+  handle('resetWorkflow', async () => {
+    if ((await lstat(WORKFLOW_FILE).catch(() => null))?.isSymbolicLink()) return { error: 'workflow.json is a link; Bridge leaves it alone' }
+    await (workflowWrites = workflowWrites.then(() => rm(WORKFLOW_FILE, { force: true })).catch(() => undefined))
+    workflow = DEFAULT_WORKFLOW
+    send('state', await snapshot())
+    lastCompanion = ''
+    void updateCompanion()
+    return {}
+  })
   handle('tabs', () => tabsNow())
   handle('selectTab', async (key: unknown) => selectTab(text(key, 2000)))
   handle('closeTab', async (key: unknown) => {
@@ -928,7 +1004,8 @@ function wireIpc() {
     send('state', await snapshot())
   })
   handle('companionToggle', async () => {
-    config.companion = config.companion === 'off' ? 'auto' : 'off'
+    // round the three: shows while work runs, always on, off
+    config.companion = config.companion === 'auto' ? 'always' : config.companion === 'always' ? 'off' : 'auto'
     saveConfig()
     // Turned on while nothing runs: show it for a few seconds so you see where it is.
     previewUntil = config.companion === 'auto' ? Date.now() + 5000 : 0
@@ -1101,6 +1178,7 @@ function companionState() {
     runs,
     claude,
     deck: deckInfo(),
+    workflow,
   }
 }
 
@@ -1112,7 +1190,8 @@ async function updateCompanion() {
   if (state.busy) idleSince = null
   else if (idleSince === null) idleSince = nowMs
   const lingering = idleSince !== null && nowMs - idleSince < LINGER_MS
-  const visible = config.companion === 'auto' && (state.busy || (lingering && lastCompanion !== '') || nowMs < previewUntil)
+  // always on: up whatever runs, so every workflow and agent can be followed without the Claude app
+  const visible = config.companion === 'always' || (config.companion === 'auto' && (state.busy || (lingering && lastCompanion !== '') || nowMs < previewUntil))
 
   const text = JSON.stringify({ ...state, visible })
   if (text === lastCompanion) return
@@ -1125,7 +1204,7 @@ async function updateCompanion() {
   companion.webContents.send('companion', { ...state, visible })
   if (!visible && companion.isVisible()) {
     setTimeout(() => {
-      if (companion && JSON.parse(lastCompanion).visible === false) companion.hide()
+      if (companion && lastCompanion && (JSON.parse(lastCompanion) as { visible?: boolean }).visible === false) companion.hide()
     }, 300)
   }
 }
@@ -1242,6 +1321,13 @@ async function shoot() {
   for (const theme of ['cli', 'drawn'] as const) {
     await look(theme)
     await snap(`${theme}-flow`)
+    // the step editor, open over the window, with a step of medium chosen
+    await web.executeJavaScript("window.__bridgeFlow && window.__bridgeFlow.openSteps()").catch(() => undefined)
+    await wait(500)
+    await web.executeJavaScript("(() => { const b = document.querySelector('.st-chip[data-size=medium][data-i=\"2\"]'); if (b) b.click() })()").catch(() => undefined)
+    await wait(500)
+    await snap(`${theme}-steps`)
+    await web.executeJavaScript("window.__bridgeFlow && window.__bridgeFlow.closeSteps()").catch(() => undefined)
     report[theme] = await fps()
     // three moments of the companion's motion, to check the step it shows by animation
     await snapCompanion(`${theme}-companion`)

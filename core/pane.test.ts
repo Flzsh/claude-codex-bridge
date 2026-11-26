@@ -159,13 +159,13 @@ group('the pane picture', () => {
   }
 
   for (const look of ['cli', 'drawn'] as const) {
-    test(`${look}: liquid runs down the line into each working step, and stands still when paused`, () => {
+    test(`${look}: a pulse runs down the line into each working step, as in the app, and none when paused`, () => {
       // mid-build two steps work: a line runs into each
       const m = paneModel(flow, head, false, 45)!
       expect(m.flows.map(one => one.lane).sort()).toEqual(['claude', 'codex'])
       expect(m.flows.every(one => one.cells.length > 1)).toBe(true)
       const svg = paneSvg(m, look, 45)
-      const liquid = /stroke-dasharray="1[34] 5 3 [56]"/g
+      const liquid = /<g class="pulse">/g
       expect((svg.match(liquid) ?? []).length).toBe(2)
       // paused, nothing runs; before the build, no step works and no line runs
       expect((paneSvg(paneModel(flow, head, true, 45)!, look, 45).match(liquid) ?? []).length).toBe(0)
@@ -185,6 +185,22 @@ group('the pane picture', () => {
     // a review waits for you: Claude waits too, no working row
     expect(working(paneModel(flow, head, false, 30, true))).toBe(0)
     expect(paneSvg(paneModel(between, head, false, 20.6, true)!, 'cli', 20.6)).toContain('working on the next step')
+  })
+
+  test('a working step right below the one it follows still gets its pulse, from that node', () => {
+    const events: FlowEvent[] = [
+      { t: 1, id: 'ask', lane: 'you', phase: 0, state: 'done', title: 'asked' },
+      { t: 2, id: 'a', lane: 'claude', phase: 1, after: ['ask'], state: 'done', title: 'did a' },
+      { t: 3, id: 'b', lane: 'claude', phase: 1, after: ['a'], state: 'running', title: 'doing b' },
+    ]
+    const m = paneModel(events, head, false, 4)!
+    expect(m.flows.length).toBe(1)
+    const cells = m.flows[0]!.cells
+    expect(cells.length).toBeGreaterThan(1)
+    // it starts at a's node and ends at b's
+    const rowOf = (id: string) => m.rows.findIndex(r => r.kind === 'step' && r.id === id)
+    expect(cells[0]![0]).toBe(rowOf('a'))
+    expect(cells[cells.length - 1]![0]).toBe(rowOf('b'))
   })
 
   test('text is escaped', () => {

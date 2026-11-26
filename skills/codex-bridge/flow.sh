@@ -1,16 +1,27 @@
 #!/usr/bin/env bash
-# Write Bridge workflow events and wait for answers from the desktop or CLI.
+# Show workflow steps, write events and wait for answers from the desktop or CLI.
 set -u
 
 workdir="${BRIDGE_WORKDIR:-$PWD}"
 registry="${BRIDGE_REGISTRY_DIR:-}"
+script_dir=
+workflow_file="${BRIDGE_WORKFLOW_FILE:-}"
 if [[ -z "$registry" ]]; then
   plugin_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)" || exit
   registry="$plugin_root/status/flows"
 fi
+if [[ "${1:-}" == steps ]]; then
+  script_dir="$(cd -L -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -L)" || exit
+fi
 if command -v cygpath >/dev/null 2>&1; then
   workdir="$(cygpath -am -- "$workdir")" || exit
   registry="$(cygpath -am -- "$registry")" || exit
+  if [[ -n "$script_dir" ]]; then
+    script_dir="$(cygpath -am -- "$script_dir")" || exit
+    if [[ -n "$workflow_file" ]]; then
+      workflow_file="$(cygpath -am -- "$workflow_file")" || exit
+    fi
+  fi
 fi
 
 # Convert only filesystem paths. Git Bash must pass event text and run IDs verbatim.
@@ -20,7 +31,7 @@ const path = require("node:path");
 const { randomBytes } = require("node:crypto");
 const { setTimeout: sleep } = require("node:timers/promises");
 
-const [directory, registryDirectory, command, ...args] = process.argv.slice(1);
+const [directory, registryDirectory, scriptDir, workflowFile, command, ...args] = process.argv.slice(1);
 const workdir = path.isAbsolute(directory) ? directory : path.resolve(directory);
 const registry = path.resolve(registryDirectory);
 const bridge = path.join(workdir, ".bridge");
@@ -89,6 +100,84 @@ function requireArgs(count, usage, extra = false) {
   if (args.length < count || (!extra && args.length !== count)) throw new UsageError(`usage: flow.sh ${usage}`);
 }
 
+function workflowStat(file) {
+  const parent = path.dirname(file);
+  if (parent !== file) workflowStat(parent);
+  const stat = fs.lstatSync(file);
+  if (stat.isSymbolicLink()) throw new Error(`refusing workflow symlink: ${file}`);
+  return stat;
+}
+
+function readWorkflow(file) {
+  const resolved = path.resolve(file);
+  if (!workflowStat(resolved).isFile()) throw new Error("workflow must be a regular file");
+  const fd = fs.openSync(resolved, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
+  try { return JSON.parse(fs.readFileSync(fd, "utf8")); }
+  finally { fs.closeSync(fd); }
+}
+
+const stepLanes = {
+  ask: ["you"], plan: lanes, merge: lanes, decide: ["you"], build: ["claude", "codex"],
+  review: ["claude", "codex", "gemini"], ship: ["claude", "you"],
+};
+
+function validStep(step, phase, total) {
+  if (typeof step?.kind !== "string" || !Object.hasOwn(stepLanes, step.kind)) return false;
+  const { kind, label, who, codex, rounds, gate } = step;
+  if (typeof label !== "string" || label.trim() !== label || !label || [...label].length > 24 || /[\r\n\u2028\u2029]/.test(label)) return false;
+  if (!Array.isArray(who) || !who.length || new Set(who).size !== who.length ||
+      !who.every(lane => stepLanes[kind].includes(lane))) return false;
+  if (phase === 0 && kind !== "ask") return false;
+  if (phase === total - 1 && kind !== "ship") return false;
+  if (kind === "ship" && (who[0] !== "claude" || who[1] !== "you")) return false;
+  if ((kind === "plan" || kind === "merge") && !who.includes("claude")) return false;
+  if (codex !== undefined && (kind !== "build" || !who.includes("codex") || !["one", "all"].includes(codex))) return false;
+  if (rounds !== undefined && (kind !== "review" || (rounds !== 1 && rounds !== 2))) return false;
+  return gate === undefined || (kind !== "decide" && gate === "none") || gate === "timed" || gate === "yes";
+}
+
+function workflowSteps(workflow, size) {
+  const steps = workflow?.sizes?.[size];
+  if (workflow?.v !== 1 || !Array.isArray(steps) || steps.length < 2 || steps.length > 9 ||
+      !steps.every((step, phase) => validStep(step, phase, steps.length))) {
+    throw new Error(`invalid ${size} workflow`);
+  }
+  return steps;
+}
+
+// Keep the lines in sync with core/workflow.ts.
+function describeStep(step, phase) {
+  const { kind, label, who, codex, rounds } = step;
+  const details = [];
+  if (kind === "build" && who.includes("codex")) {
+    const ui = who.includes("claude") ? ", claude the UI" : "";
+    details.push(codex === "all" ? `codex builds every backend block${ui}` : "codex builds one bounded block");
+  }
+  if (kind === "review") details.push(rounds === 2 ? "2 review rounds" : "1 review round");
+  const gate = step.gate ?? (kind === "decide" ? "timed" : "none");
+  if (gate === "timed") details.push("you review after it: carries on after the wait");
+  if (gate === "yes") details.push("you review after it: needs your yes");
+  const names = who.map(lane => lane[0].toUpperCase() + lane.slice(1)).join(", ");
+  return `${phase} ${kind} | ${label} | ${names} | ${details.join("; ") || "-"}`;
+}
+
+function showWorkflow() {
+  requireArgs(1, "steps <small|medium|large>");
+  const size = choose(args[0], ["small", "medium", "large"], "size");
+  const ownerFile = workflowFile || path.join(scriptDir, "..", "..", "workflow.json");
+  let steps;
+  try {
+    steps = workflowSteps(readWorkflow(ownerFile), size);
+  } catch (error) {
+    if (error.code !== "ENOENT") {
+      const reason = error.message.replace(/[\r\n]+/g, " ");
+      console.error(`flow.sh: ${reason}; using default ${size} workflow`);
+    }
+    steps = workflowSteps(readWorkflow(path.join(scriptDir, "workflow.default.json")), size);
+  }
+  console.log(steps.map(describeStep).join("\n"));
+}
+
 function parseEvent() {
   switch (command) {
     case "start": {
@@ -152,7 +241,7 @@ function parseEvent() {
       return { answer, gate: gate === undefined && !answers.includes(answer) ? undefined : safeId(gate), text: opts["--text"] };
     }
     default:
-      throw new UsageError("usage: flow.sh <start|end|step|say|meter|steer|check|gate|wait|answer> [args]");
+      throw new UsageError("usage: flow.sh <steps|start|end|step|say|meter|steer|check|gate|wait|answer> [args]");
   }
 }
 
@@ -501,6 +590,7 @@ async function waitForGate(flow, gate) {
 }
 
 async function main() {
+  if (command === "steps") return showWorkflow();
   const event = parseEvent();
   prepareControl(control);
   if (command === "start") return start(event);
@@ -553,4 +643,4 @@ main().catch(error => {
   console.error(`flow.sh: ${error.message}`);
   process.exitCode = error instanceof UsageError ? 2 : 1;
 });
-' -- "$workdir" "$registry" "$@"
+' -- "$workdir" "$registry" "$script_dir" "$workflow_file" "$@"

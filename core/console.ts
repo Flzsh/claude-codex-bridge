@@ -1,4 +1,5 @@
 import type { ConsoleMode, ConsoleState, ConsoleTab, Entry, LogItem, Provider } from '../types'
+import { DEFAULT_WORKFLOW, stagesOf, type Workflow } from './workflow'
 
 export type { ConsoleMode, ConsoleState, ConsoleTab, Entry, LogItem }
 
@@ -280,8 +281,8 @@ const SIZE_STAGES: Record<Size, readonly Stage[]> = {
 }
 
 /** The steps of a workflow of this size. */
-export function stagesFor(size: Size): readonly Stage[] {
-  return SIZE_STAGES[size]
+export function stagesFor(size: Size, workflow: Workflow = DEFAULT_WORKFLOW): readonly Stage[] {
+  return stagesOf(workflow, size)
 }
 
 /** The full (large) workflow's steps. */

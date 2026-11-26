@@ -7,6 +7,7 @@
 import { stagesFor, type Size } from '../../../../core/console'
 import { fold, LANE, LANES, type Lane, type Step } from '../../../../core/flow'
 import { gateLeft, gateOptions, type Flow, type Frame, type Pane } from './controller'
+import { StepsEditor } from './steps'
 import { TabStrip, tabKey } from './tabs'
 import {
   cap, CLAY_UI, clamp, clockSvg, DEEP, ease, easeInOut, elapsed, esc, faceSvg, failSvg, FILL, frame, linePath, loopSvg,
@@ -96,6 +97,8 @@ export class DrawnView {
   private readonly off: (() => void)[] = []
   /** The workflows' tabs, in the top bar. */
   private readonly tabStrip: TabStrip
+  /** The step editor, over the page while open. */
+  private readonly stepsEditor: StepsEditor
 
   constructor(private readonly root: HTMLElement, private readonly flow: Flow) {
     root.classList.add('theme-drawn')
@@ -105,6 +108,7 @@ export class DrawnView {
     const tabHost = div('d-flowtabs', '')
     top.append(tabHost)
     this.tabStrip = new TabStrip(tabHost, flow, 'drawn')
+    this.stepsEditor = new StepsEditor(root, flow, 'drawn')
     const tag = (key: string, cls = 'd-tag'): Tag => {
       // only the tags that do something are buttons
       const el = document.createElement(key === 'pause' || key === 'theme' || key === 'status' ? 'button' : 'span')
@@ -166,6 +170,7 @@ export class DrawnView {
   destroy() {
     for (const off of this.off) off()
     this.tabStrip.destroy()
+    this.stepsEditor.destroy()
     this.root.classList.remove('theme-drawn')
     this.page.remove()
   }
@@ -311,6 +316,7 @@ export class DrawnView {
     // the shortcuts work wherever the focus is
     on(window, 'keydown', event => {
       if (tabKey(event, flow)) return
+      if (flow.stepsOpen && event.key === 'Escape') { event.preventDefault(); flow.closeSteps(); return }
       const ctrl = event.ctrlKey || event.metaKey
       if (ctrl && event.key.toLowerCase() === 'p') { event.preventDefault(); void flow.togglePause() }
       else if (ctrl && event.key.toLowerCase() === 't') { event.preventDefault(); void flow.setTheme('cli') }
@@ -391,6 +397,7 @@ export class DrawnView {
     if (act === 'gemini-effort') void flow.api.setEffort('gemini', cycle([null, ...st.effortChoices.gemini], st.efforts.gemini))
     if (act === 'mode') void flow.api.setMode(st.mode === 'workspace-write' ? 'read-only' : 'workspace-write')
     if (act === 'flow' && value) void flow.api.showFlow(value)
+    if (act === 'steps') flow.openSteps()
   }
 
   // ---------------------------------------------------------------- draw
@@ -401,6 +408,7 @@ export class DrawnView {
     const frame = flow.frame()
     const t = frame.now
     this.tabStrip.render(t)
+    this.stepsEditor.render()
     // with several tabs, the tabs say who works: the top bar gives them the room of its own status and look tags
     this.root.classList.toggle('has-tabs', flow.tabs.length > 1)
     const steps = frame.steps
@@ -636,7 +644,7 @@ export class DrawnView {
     this.tags.task.el.classList.toggle('is-link', !flow.settings?.workdir)
     const size = (info?.size ?? null) as Size | null
     this.setTag(this.tags.size, size ? cap(size) : '', size ? 'manila' : null, 70)
-    const phases = stagesFor(size && ['small', 'medium', 'large'].includes(size) ? size : 'large')
+    const phases = stagesFor(size && ['small', 'medium', 'large'].includes(size) ? size : 'large', flow.settings?.workflow)
     const stepWords = frame.phase >= 0 ? `${frame.phase + 1}/${phases.length} · ${phases[frame.phase]?.label ?? ''}` : ''
     this.setTag(this.tags.step, stepWords, frame.phase >= 0 ? 'oat' : null, Math.round(36 + stepWords.length * 6.6))
     const gate = frame.gate
@@ -811,12 +819,13 @@ export class DrawnView {
     html += row('Folder', st.workdir ?? 'None', 'folder')
     for (const path of st.recent.filter(p => p !== st.workdir).slice(0, 4)) html += row('', path, 'recent', `data-value="${esc(path)}"`)
     html += row('Look', st.theme === 'cli' ? 'Terminal' : 'Drawn', 'theme')
-    html += row('Companion', st.companion === 'auto' ? 'Shows while work runs' : 'Off', 'companion')
+    html += row('Companion', st.companion === 'auto' ? 'Shows while work runs' : st.companion === 'always' ? 'Always on' : 'Off', 'companion')
     html += row('On top', st.pinned ? 'Yes' : 'No', 'pin')
     html += row('Codex model', st.codexModel, 'model')
     html += row('Codex effort', st.efforts.codex ?? 'Default', 'codex-effort')
     html += row('Codex edits', st.mode === 'workspace-write' ? 'May edit files' : 'Read only', 'mode')
     html += row('Gemini effort', st.efforts.gemini ?? 'Default', 'gemini-effort')
+    html += row('Steps', 'Edit the steps ›', 'steps')
     if (st.bashError) html += `<div class="d-empty">${esc(st.bashError)}</div>`
     if (flow.flows.length > 1) {
       html += '<div class="d-sub-h">Flows</div>'

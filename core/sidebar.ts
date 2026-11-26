@@ -38,7 +38,9 @@ const MAX_WORK = 4
 const cap = (text: string) => (text ? text[0]!.toUpperCase() + text.slice(1) : text)
 
 /** The flow as the sidebar shows it, or null when there is none worth showing. */
-export function sidebarView(events: readonly FlowEvent[], head: FlowHead | null, paused: boolean, at: number): SidebarView | null {
+export function sidebarView(
+  events: readonly FlowEvent[], head: FlowHead | null, paused: boolean, at: number, workflow?: import('./workflow').Workflow,
+): SidebarView | null {
   if (!head || !events.length) return null
   const lastT = events[events.length - 1]!.t
   const steps = [...fold(events, at).values()]
@@ -49,7 +51,7 @@ export function sidebarView(events: readonly FlowEvent[], head: FlowHead | null,
   if (at - lastT > QUIET_AFTER && !working.length && !gate) return null
   const finished = head.state === 'done'
   const size = (['small', 'medium', 'large'].includes(head.size ?? '') ? head.size : 'large') as Size
-  const labels = stagesFor(size).map(stage => stage.label).slice(0, MAX_PHASES)
+  const labels = stagesFor(size, workflow).map(stage => stage.label).slice(0, MAX_PHASES)
   const top = steps.reduce((p, s) => Math.max(p, typeof s.phase === 'number' ? s.phase : -1), -1)
   const phase = Math.min(top, labels.length - 1)
   const phases: PhaseRow[] =
