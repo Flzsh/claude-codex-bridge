@@ -1,9 +1,9 @@
 {
   "name": "codex-bridge",
-  "version": "0.1.0",
-  "description": "Hand routine work from Claude Code to OpenAI Codex on your ChatGPT plan, and watch each job on a Codex card above the message box",
+  "version": "0.6.3",
+  "description": "Claude hands routine work to Codex on your ChatGPT plan and asks Gemini for a second plan and reviews; the Bridge app, its companion and a pane beside the chat show every workflow live",
   "author": { "name": "Flzsh" },
-  "homepage": "https://github.com/Flzsh/claude-codex-bridge",
+  "homepage": "https://github.com/Flzsh/claude-bridge",
   "license": "MIT",
   "types": "./types/index.d.ts"
 }

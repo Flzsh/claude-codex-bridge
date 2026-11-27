@@ -1,0 +1,129 @@
+{
+  "v": 1,
+  "sizes": {
+    "small": [
+      {
+        "kind": "ask",
+        "label": "Ask",
+        "who": [
+          "you"
+        ]
+      },
+      {
+        "kind": "build",
+        "label": "Do",
+        "who": [
+          "claude"
+        ]
+      },
+      {
+        "kind": "ship",
+        "label": "Check",
+        "who": [
+          "claude",
+          "you"
+        ]
+      }
+    ],
+    "medium": [
+      {
+        "kind": "ask",
+        "label": "Ask",
+        "who": [
+          "you"
+        ]
+      },
+      {
+        "kind": "plan",
+        "label": "Plan",
+        "who": [
+          "claude"
+        ]
+      },
+      {
+        "kind": "build",
+        "label": "Build",
+        "who": [
+          "claude",
+          "codex"
+        ],
+        "codex": "one"
+      },
+      {
+        "kind": "review",
+        "label": "Review",
+        "who": [
+          "codex",
+          "gemini"
+        ],
+        "rounds": 1
+      },
+      {
+        "kind": "ship",
+        "label": "Check & ship",
+        "who": [
+          "claude",
+          "you"
+        ]
+      }
+    ],
+    "large": [
+      {
+        "kind": "ask",
+        "label": "Ask",
+        "who": [
+          "you"
+        ]
+      },
+      {
+        "kind": "plan",
+        "label": "Two plans",
+        "who": [
+          "claude",
+          "gemini"
+        ]
+      },
+      {
+        "kind": "merge",
+        "label": "Merge",
+        "who": [
+          "claude"
+        ]
+      },
+      {
+        "kind": "decide",
+        "label": "Decide",
+        "who": [
+          "you"
+        ],
+        "gate": "timed"
+      },
+      {
+        "kind": "build",
+        "label": "Build",
+        "who": [
+          "claude",
+          "codex"
+        ],
+        "codex": "all"
+      },
+      {
+        "kind": "review",
+        "label": "Review",
+        "who": [
+          "gemini",
+          "codex"
+        ],
+        "rounds": 2
+      },
+      {
+        "kind": "ship",
+        "label": "Check & ship",
+        "who": [
+          "claude",
+          "you"
+        ]
+      }
+    ]
+  }
+}

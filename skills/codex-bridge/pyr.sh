@@ -2,16 +2,24 @@
 # Run one Codex job for the codex-bridge skill and print only its final answer.
 # Usage: pyr.sh <workdir> <brief-file> [read-only|workspace-write]
 #
-# Model and effort come from CODEX_BRIDGE_MODEL / CODEX_BRIDGE_EFFORT
-# (defaults below); CODEX_BIN picks the codex executable.
+# Model: CODEX_BRIDGE_MODEL (default gpt-6.2-sol). Effort: the one picked on the
+# card (codexEffort in <plugin>/settings.json), else CODEX_BRIDGE_EFFORT, else high.
+# CODEX_BIN picks the codex executable.
+# CODEX_BRIDGE_BASE_URL optionally overrides openai_base_url for this job.
+# CODEX_BRIDGE_RESUME=<session id> continues that Codex conversation instead of
+# starting a new one; the status line ends with session=<id> for the next turn.
 #
 # Each run gets a folder under <plugin>/runs with brief.md, log.txt, result.md
 # and status.json; the plugin's Codex card reads status.json to show the job.
 set -u
 
 WORKDIR="${1:?workdir}"; BRIEF="${2:?brief file}"; SANDBOX="${3:-workspace-write}"
-MODEL="${CODEX_BRIDGE_MODEL:-gpt-6.1-sol}"
-EFFORT="${CODEX_BRIDGE_EFFORT:-xhigh}"
+# skills/codex-bridge/pyr.sh -> the plugin's root, where runs/ and settings.json live.
+PLUGIN_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+MODEL="${CODEX_BRIDGE_MODEL:-gpt-6.2-sol}"
+# The card writes settings.json as one line of JSON, letters only in the values.
+PICKED="$(sed -n 's/.*"codexEffort":"\([a-z]*\)".*/\1/p' "$PLUGIN_ROOT/settings.json" 2>/dev/null | head -1)"
+EFFORT="${PICKED:-${CODEX_BRIDGE_EFFORT:-high}}"
 
 case "$SANDBOX" in read-only|workspace-write) ;; *) echo "sandbox must be read-only or workspace-write" >&2; exit 2 ;; esac
 [ -f "$BRIEF" ] || { echo "brief file not found: $BRIEF" >&2; exit 2; }
@@ -27,40 +35,88 @@ fi
 command -v "$CX" >/dev/null 2>&1 || [ -x "$CX" ] || {
   echo "codex not found. Install it (npm install -g @openai/codex) and run: codex login" >&2; exit 2;
 }
+# Absolute path, so a relative CODEX_BIN still works after the cd of a resumed run.
+case "$CX" in
+  */*|*\\*) CX="$(cd "$(dirname -- "$CX")" && pwd)/$(basename -- "$CX")" ;;
+  *) CX="$(command -v "$CX")" ;;
+esac
 
-# skills/codex-bridge/pyr.sh -> the plugin's root, where runs/ lives.
-PLUGIN_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 RUN="$PLUGIN_ROOT/runs/$(date +%Y%m%d-%H%M%S)-$$"
 mkdir -p "$RUN" && cp -- "$BRIEF" "$RUN/brief.md" || { echo "could not set up $RUN" >&2; exit 2; }
 
 # First non-empty line of the brief, made safe for JSON, as the job's title.
 TITLE="$(grep -m1 -v '^[[:space:]]*$' "$RUN/brief.md" | tr '\t' ' ' | tr -d '\000-\037"\134' | cut -c1-90)"
+# shellcheck source=project.sh
+. "$(dirname "$0")/project.sh"
+bridge_brief "$RUN/brief.md" "$RUN/sent.md"
 START=$(date +%s)
 write_status() { # state exit
-  printf '{"model":"%s","effort":"%s","title":"%s","workdir":"%s","startedAt":%s,"state":"%s","exit":%s,"endedAt":%s}\n' \
-    "$(printf %s "$MODEL" | tr -d '\000-\037"\134')" "$(printf %s "$EFFORT" | tr -d '\000-\037"\134')" "$TITLE" \
+  printf '{"provider":"codex","origin":"%s","session":"%s","model":"%s","effort":"%s","title":"%s","workdir":"%s","startedAt":%s,"state":"%s","exit":%s,"endedAt":%s}\n' \
+    "$(printf %s "${BRIDGE_ORIGIN:-claude}" | tr -cd "a-z")" "$SESSION" "$(printf %s "$MODEL" | tr -d '\000-\037"\134')" "$(printf %s "$EFFORT" | tr -d '\000-\037"\134')" "$TITLE" \
     "$(basename -- "$WORKDIR" | tr -d '\000-\037"\134')" "$START" "$1" "$2" \
     "$([ "$1" = running ] && echo null || date +%s)" > "$RUN/status.json.tmp" && mv -f "$RUN/status.json.tmp" "$RUN/status.json"
 }
 
+# Session ids are letters, digits and dashes; anything else is dropped.
+RESUME="$(printf %s "${CODEX_BRIDGE_RESUME:-}" | tr -cd 'A-Za-z0-9-')"
+SESSION="$RESUME"
+
 DONE=0
-finish() { [ "$DONE" = 1 ] || write_status failed 130; }
+finish() {
+  if [ "$DONE" != 1 ]; then
+    write_status failed 130
+    bridge_flow_finish 130
+  fi
+}
 trap finish EXIT
 trap 'exit 130' INT TERM HUP
 
+# Keep the override a single argument containing a TOML string literal.
+BASE_ARGS=()
+if [ -n "${CODEX_BRIDGE_BASE_URL:-}" ]; then
+  BASE_URL="$CODEX_BRIDGE_BASE_URL"
+  BASE_URL="${BASE_URL//\\/\\\\}"
+  BASE_URL="${BASE_URL//\"/\\\"}"
+  BASE_URL="${BASE_URL//$'\n'/\\n}"
+  BASE_URL="${BASE_URL//$'\r'/\\r}"
+  BASE_URL="${BASE_URL//$'\t'/\\t}"
+  BASE_ARGS=(-c "openai_base_url=\"$BASE_URL\"")
+fi
+
+bridge_flow_start codex || bridge_flow_paused_exit
 write_status running null
-"$CX" exec --skip-git-repo-check -C "$WORKDIR" -s "$SANDBOX" \
-  -m "$MODEL" -c model_reasoning_effort="$EFFORT" \
-  -o "$RUN/result.md" - < "$RUN/brief.md" > "$RUN/log.txt" 2>&1
+if [ "${FLOW_ACTIVE:-0}" = 1 ]; then
+  BRIDGE_FLOW_ID="$FLOW_ID" node "$(dirname "$0")/flowtail.mjs" "$RUN/log.txt" "$FLOW_WORKDIR" "$BRIDGE_STEP" &
+  FLOWTAIL_PID=$!
+fi
+if [ -n "$RESUME" ]; then
+  # resume takes no -C/-s: run it from the workdir and pass the sandbox as a setting.
+  (cd "$WORKDIR" && "$CX" exec resume "$RESUME" --skip-git-repo-check \
+    -m "$MODEL" -c model_reasoning_effort="$EFFORT" -c sandbox_mode="\"$SANDBOX\"" \
+    ${BASE_ARGS[@]+"${BASE_ARGS[@]}"} \
+    -o "$RUN/result.md" - < "$RUN/sent.md") > "$RUN/log.txt" 2>&1
+else
+  "$CX" exec --skip-git-repo-check -C "$WORKDIR" -s "$SANDBOX" \
+    -m "$MODEL" -c model_reasoning_effort="$EFFORT" \
+    ${BASE_ARGS[@]+"${BASE_ARGS[@]}"} \
+    -o "$RUN/result.md" - < "$RUN/sent.md" > "$RUN/log.txt" 2>&1
+fi
 CODE=$?
+FOUND="$(sed -n 's/^session id: *\([A-Za-z0-9-]*\).*/\1/p' "$RUN/log.txt" | head -1)"
+[ -z "$FOUND" ] || SESSION="$FOUND"
 if [ "$CODE" = 0 ] && [ -s "$RUN/result.md" ]; then write_status done 0; else [ "$CODE" = 0 ] && CODE=1; write_status failed "$CODE"; fi
 DONE=1
+bridge_flow_finish "$CODE"
+bridge_log "Codex · $MODEL · $EFFORT" "$RUN/result.md" "$CODE"
 
-echo "model=$MODEL effort=$EFFORT exit=$CODE time=$(( $(date +%s) - START ))s run=$RUN"
+echo "model=$MODEL effort=$EFFORT exit=$CODE time=$(( $(date +%s) - START ))s run=$RUN session=$SESSION"
 if [ -s "$RUN/result.md" ]; then
   cat "$RUN/result.md"; echo
 else
   echo "NO RESULT. Last log lines:"
   grep -v '^[[:space:]]*$' "$RUN/log.txt" | tail -12 | cut -c1-300
+fi
+if [ "$CODE" != 0 ] && grep -Eiq '426 Upgrade Required|connection refused|ECONNREFUSED|127\.0\.0\.1|localhost:[0-9]+' "$RUN/log.txt"; then
+  echo "Hint: Codex may be routed through a local proxy (openai_base_url in ~/.codex/config.toml). To go straight to ChatGPT for these jobs, set CODEX_BRIDGE_BASE_URL=https://chatgpt.com/backend-api/codex"
 fi
 exit $CODE

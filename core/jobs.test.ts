@@ -1,6 +1,22 @@
 import { describe as group, expect, test } from 'claude-code/testing'
 
-import { clip, detail, duration, headline, isVisible, logTail, modelName, ordered, runsDir, timing, toJob } from './jobs'
+import {
+  clip,
+  detail,
+  duration,
+  effortsText,
+  headline,
+  isVisible,
+  logTail,
+  modelName,
+  ordered,
+  parseEfforts,
+  providerName,
+  runsDir,
+  settingsPath,
+  timing,
+  toJob,
+} from './jobs'
 
 const status = (fields: Record<string, unknown>) =>
   JSON.stringify({
@@ -56,6 +72,21 @@ group('codex jobs', () => {
     expect(duration(3725)).toBe('1h 02m')
     expect(modelName('o3')).toBe('o3')
     expect(modelName('gpt-6-astra')).toBe('Astra 6')
+    expect(modelName('gemini-4-neon')).toBe('Gemini 4 Neon')
+    expect(modelName('gemini')).toBe('Gemini')
+  })
+
+  test('a run from 0.1.0 has no provider and counts as Codex', () => {
+    const job = toJob('f', status({}), 1010)
+    expect(job?.provider).toBe('codex')
+    expect(providerName(job!.provider)).toBe('Codex')
+  })
+
+  test('a Gemini run is named as Gemini', () => {
+    const job = toJob('g', status({ provider: 'gemini', model: 'gemini-4-neon', effort: '', state: 'done', exit: 0, endedAt: 1020 }), 1030)
+    expect(job?.provider).toBe('gemini')
+    expect(providerName(job!.provider)).toBe('Gemini')
+    expect(headline(job!)).toBe('Gemini 4 Neon')
   })
 })
 
@@ -83,5 +114,24 @@ group('codex jobs runs folder', () => {
   test('runs live in the plugin folder, whatever its trailing slash', () => {
     expect(runsDir('C:\\plugins\\codex-bridge\\')).toBe('C:\\plugins\\codex-bridge/runs')
     expect(runsDir('/home/me/.claude/plugins/codex-bridge')).toBe('/home/me/.claude/plugins/codex-bridge/runs')
+  })
+})
+
+group('codex jobs effort settings', () => {
+  test('saved efforts round-trip and unknown values are dropped', () => {
+    const text = effortsText({ codex: 'ultra', gemini: 'low' })
+    expect(text).toBe('{"codexEffort":"ultra","geminiEffort":"low"}\n')
+    expect(parseEfforts(text)).toEqual({ codex: 'ultra', gemini: 'low' })
+    expect(parseEfforts('{"codexEffort":"turbo","geminiEffort":"ultra"}')).toEqual({ codex: null, gemini: null })
+  })
+
+  test('a missing or broken file means defaults', () => {
+    expect(parseEfforts('')).toEqual({ codex: null, gemini: null })
+    expect(parseEfforts('[1,2]')).toEqual({ codex: null, gemini: null })
+    expect(effortsText({ codex: null, gemini: null })).toBe('{}\n')
+  })
+
+  test('settings live in the plugin folder', () => {
+    expect(settingsPath('C:\\plugins\\codex-bridge\\')).toBe('C:\\plugins\\codex-bridge/settings.json')
   })
 })

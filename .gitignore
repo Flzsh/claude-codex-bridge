@@ -2,3 +2,14 @@ runs/
 .claude-plugin/types/
 *.log
 .DS_Store
+settings.json
+workflow.json
+.bridge/
+app/node_modules/
+app/dist/
+app/dist-test/
+app/build.lock/
+inbox/
+app-briefs/
+console/
+status/

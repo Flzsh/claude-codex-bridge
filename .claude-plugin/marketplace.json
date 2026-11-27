@@ -1,6 +1,13 @@
 {
   "name": "codex-bridge",
-  "owner": { "name": "Flzsh" },
-  "description": "Claude Code plugin: hand routine work to OpenAI Codex and watch it on a Codex card",
-  "plugins": [{ "name": "codex-bridge", "source": "./" }]
+  "owner": {
+    "name": "Flzsh"
+  },
+  "description": "Bridge: Claude leads, Codex builds, Gemini double-checks, and a desktop app shows all three at work",
+  "plugins": [
+    {
+      "name": "codex-bridge",
+      "source": "./"
+    }
+  ]
 }

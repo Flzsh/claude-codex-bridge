@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <!-- Bridge: the terminal prompt, its > drawn as the workflow. Claude at the top end, Gemini at
+       the turn, Codex (ChatGPT) at the bottom end, then the cursor (rough K1, the owner's pick). -->
+  <rect x="8" y="8" width="240" height="240" rx="56" fill="#151413"/>
+  <rect x="8.5" y="8.5" width="239" height="239" rx="56" fill="none" stroke="#3a3732" stroke-width="3"/>
+  <path d="M72 70 L150 128 L72 186" fill="none" stroke="#d4cec2" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="46" y="44" width="52" height="52" rx="7.28" fill="#d9825b"/>
+  <rect x="124" y="102" width="52" height="52" rx="7.28" fill="#a98ddc"/>
+  <rect x="46" y="160" width="52" height="52" rx="7.28" fill="#84bf7d"/>
+  <rect x="166" y="184" width="52" height="16" rx="5.33" fill="#d4cec2"/>
+</svg>
