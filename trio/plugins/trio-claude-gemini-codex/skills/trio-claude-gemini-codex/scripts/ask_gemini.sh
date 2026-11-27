@@ -35,7 +35,8 @@ secrets="$(find_secrets "$root")" || die "cannot determine Gemini exclusions"
 settings="$(SECRETS="$secrets" ROOT="$root" python3 -c '
 import json, os
 paths = sorted({(p[2:] if p.startswith("./") else p) for p in os.environ["SECRETS"].splitlines() if p.strip()})
-deny = ["write_file(*)", "command(*)", "mcp(*)"]
+# no URLs either: a prompt-injected answer must not be able to send what it read anywhere
+deny = ["write_file(*)", "command(*)", "mcp(*)", "read_url(*)", "execute_url(*)"]
 for p in paths:
     full = os.path.join(os.environ["ROOT"], p)
     deny += ["read_file(%s)" % p, "read_file(%s)" % full]

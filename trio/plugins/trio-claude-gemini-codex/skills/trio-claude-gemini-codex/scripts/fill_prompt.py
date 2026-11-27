@@ -28,8 +28,17 @@ def main(argv):
         print(__doc__.strip())
         return 2
     template, out, rest = argv[0], argv[1], argv[2:]
-    path = template if os.path.exists(template) else os.path.join(SKILL_DIR, "prompts", f"{template.removesuffix('.md')}.md")
-    if not os.path.exists(path):
+    builtin = os.path.join(SKILL_DIR, "prompts", f"{os.path.basename(template).removesuffix('.md')}.md")
+    is_name = os.sep not in template and "/" not in template
+    # A bare name is always this skill's own prompt, so a file of that name in the project (a
+    # cloned repo's "codex-review", say) can never stand in for it; a path is used as given.
+    if is_name and os.path.isfile(builtin):
+        path = builtin
+    elif not is_name and os.path.isfile(template):
+        path = template
+    else:
+        path = builtin
+    if not os.path.isfile(path):
         print(f"ERROR: template not found: {template}", file=sys.stderr)
         return 1
     with open(path, encoding="utf-8") as f:

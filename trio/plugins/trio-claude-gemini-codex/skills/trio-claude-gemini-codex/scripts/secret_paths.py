@@ -6,11 +6,15 @@ from pathlib import Path
 import sys
 
 PATTERNS = (
-    ".env", ".env.*", "*.pem", "*.key", "*.p12", "*.pfx", "id_rsa*",
-    "id_ed25519*", "credentials*.json", "service-account*.json",
-    ".npmrc", ".pypirc", ".netrc",
+    ".env", ".env.*", "*.pem", "*.key", "*.p12", "*.pfx", "id_rsa*", "id_ecdsa*",
+    "id_ed25519*", "credentials", "credentials*.json", "service-account*.json",
+    ".npmrc", ".pypirc", ".netrc", ".git-credentials", ".htpasswd", ".pgpass",
+    "secret*.json", "secret*.yml", "secret*.yaml", "*.tfvars", "*.tfstate", "*.tfstate.backup",
+    "*.keystore", "*.jks", "*.kdbx", "*.sqlite", "*.sqlite3",
 )
 EXAMPLES = {".env.example", ".env.sample", ".env.template"}
+# The repository's own settings: a remote URL can carry a token.
+GIT_FILES = (".git/config",)
 PRUNED = {".git", "node_modules", ".multimodel", ".venv", "venv"}
 
 
@@ -24,8 +28,13 @@ def main():
     for directory, dirs, files in os.walk(root, onerror=fail):
         dirs[:] = [name for name in dirs if name not in PRUNED]
         for name in files:
-            if name not in EXAMPLES and any(fnmatch.fnmatchcase(name, p) for p in PATTERNS):
+            # matched whatever the letter case (macOS folders usually ignore it)
+            lower = name.lower()
+            if lower not in EXAMPLES and any(fnmatch.fnmatchcase(lower, p) for p in PATTERNS):
                 paths.add(str((Path(directory) / name).relative_to(root)))
+    for name in GIT_FILES:
+        if (root / name).is_file():
+            paths.add(name)
     ignore = root / ".geminiignore"
     if ignore.is_file():
         for line in ignore.read_text().splitlines():

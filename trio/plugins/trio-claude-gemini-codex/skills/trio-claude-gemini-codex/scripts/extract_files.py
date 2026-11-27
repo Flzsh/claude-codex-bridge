@@ -40,6 +40,12 @@ def main(argv):
     if os.path.isabs(argv[1]) or ".." in allowed.split("/") or os.path.commonpath([root, allowed_abs]) != root:
         print("ERROR: allowed-dir must be inside the repository", file=sys.stderr)
         return 1
+    # a subfolder of its own: the root would let another model's answer write anywhere in the
+    # project (Git hooks among them)
+    parts = [part for part in allowed.replace(os.sep, "/").split("/") if part not in ("", ".")]
+    if not parts or allowed_abs == root or any(part.lower() in (".git", ".multimodel") for part in parts):
+        print("ERROR: allowed-dir must be a test subfolder such as test/acceptance (not the repository root, .git or .multimodel)", file=sys.stderr)
+        return 1
     with open(answer, encoding="utf-8") as f:
         text = f.read()
 
@@ -52,7 +58,7 @@ def main(argv):
         rel, body = parts[i].strip(), parts[i + 1]
         m = re.search(r"```[^\n]*\n(.*?)\n```", body, flags=re.S)
         target = os.path.realpath(os.path.join(root, rel))
-        if os.path.isabs(rel) or ".." in rel.split("/") or not target.startswith(allowed_abs + os.sep):
+        if os.path.isabs(rel) or ".." in rel.split("/") or ".git" in [part.lower() for part in rel.split("/")] or not target.startswith(allowed_abs + os.sep):
             print(f"REFUSED (outside {allowed}/): {rel}", file=sys.stderr)
             refused += 1
             continue
