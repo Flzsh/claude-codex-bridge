@@ -33,7 +33,7 @@ The plugin has five parts:
 - **A skill** that tells Claude what to hand off (edits, tests, code reading, reviews), what to keep (hard problems, design taste, anything that publishes or touches secrets), how to brief Codex, and to check every result before showing it to you.
 - **A job script** (`skills/codex-bridge/pyr.sh`) that runs one Codex job and gives Claude only Codex's final answer, not the long log.
 - **A Gemini script** (`skills/codex-bridge/agy.sh`) that runs one Gemini job through Antigravity CLI. Gemini answers in text only: it can read files but cannot edit them or run commands, and the script never bypasses Antigravity's permission checks.
-- **The Bridge pane** beside the chat (`/codex` opens it), drawn in the app's look, terminal or hand-drawn. It shows the whole workflow on top, every step in its lane, and the step in focus below (what it is doing, or the review's points and countdown). Approve, pause or decline a review there; anything you want to say (a workflow to start, a note to steer, a change to a review) goes in the chat beside it. With no workflow it shows how one goes, the last workflow and the recent Codex and Gemini runs; click a run for its brief and reply. It is laid out for the pane's width, wide or narrow. In the terminal look it sits on dark or on white (for Claude Code's light theme): set "Claude pane" in Bridge's settings.
+- **The Bridge pane** beside the chat (`/codex` opens it), drawn in the app's look, terminal or hand-drawn. It shows the whole workflow on top, every step in its lane, and the step in focus below (what it is doing, or the review's points and countdown). Approve, pause or decline a review there; anything you want to say (a workflow to start, a note to steer, a change to a review) goes in the chat beside it. With no workflow it shows how one goes, the last workflow and the recent Codex and Gemini runs; click a run for its brief and reply. **Ask Codex ↗** opens Bridge on its Codex page with the box addressed to Codex, to ask it straight without Claude in between. It is laid out for the pane's width, wide or narrow. In the terminal look it sits on dark or on white (for Claude Code's light theme): set "Claude pane" in Bridge's settings.
 - **The Bridge app** (below), with the console as a fallback inside Claude Code for terminal and SSH use.
 
 ## The Bridge app
@@ -62,7 +62,7 @@ npm ci
 
 ## The console
 
-`/bridge console` (or **Console** on the Bridge pane) opens a pane beside the chat that works like a small terminal for Codex and Gemini, for when the app can't open (a terminal or SSH session). Its top row picks who answers, the Codex model, the effort and whether Codex may edit files. Type a prompt and press Enter; a follow-up continues the same conversation until `/new`.
+`/bridge console` opens a pane beside the chat that works like a small terminal for Codex and Gemini, for when the app can't open (a terminal or SSH session, or before the app is set up); in the desktop app, Codex and Gemini are asked in Bridge itself. Its top row picks who answers, the Codex model, the effort and whether Codex may edit files. Type a prompt and press Enter; a follow-up continues the same conversation until `/new`.
 
 | Command | Does |
 |---|---|

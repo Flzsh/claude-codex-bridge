@@ -49,7 +49,9 @@ test('with no workflow and a picture: the picture shows how it goes, the termina
     const ui = await $.ui.mount({ ...PANE, surface })
     expect(await ui.find({ type: 'Svg' })).not.toBe(undefined)
     expect(await ui.find({ type: 'Text', text: /No workflow is running here/ })).toBe(undefined)
-    expect(await ui.find({ type: 'Button', key: 'open-console' })).not.toBe(undefined)
+    // Codex straight, in the app (the console stays for the terminal)
+    expect(await ui.find({ type: 'Button', key: 'ask-codex' })).not.toBe(undefined)
+    expect(await ui.find({ type: 'Button', key: 'open-console' })).toBe(undefined)
     await ui.unmount()
   }
   const terminal = await $.ui.mount({ ...PANE, surface: 'terminal' })
@@ -121,7 +123,7 @@ for (const look of ['cli', 'drawn'] as const) {
     expect(card?.props.minHeight).toBe(40)
     // its buttons are drawn as coloured words in the look
     expect((await ui.find({ type: 'Button', key: 'open-app' }))?.props.plain).toBe(true)
-    expect((await ui.find({ type: 'Button', key: 'open-console' }))?.props.plain).toBe(true)
+    expect((await ui.find({ type: 'Button', key: 'ask-codex' }))?.props.plain).toBe(true)
     await ui.unmount()
   })
 }

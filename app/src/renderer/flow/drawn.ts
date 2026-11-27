@@ -312,6 +312,14 @@ export class DrawnView {
       this.off.push(() => el.removeEventListener(type, fn as EventListener))
     }
     const flow = this.flow
+    // "Ask Codex" from the Claude Code pane: the box addressed to it, the caret at its end
+    this.off.push(
+      flow.onBox(() => {
+        this.input.value = flow.input
+        this.input.focus()
+        this.input.setSelectionRange(this.input.value.length, this.input.value.length)
+      }),
+    )
     on(this.input, 'input', () => flow.typed(this.input.value, flow.frame().gate))
     // the shortcuts work wherever the focus is
     on(window, 'keydown', event => {

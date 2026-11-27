@@ -57,7 +57,7 @@ export type TabInfo = {
 export type BridgeApi = {
   state(): Promise<Settings>
   flow(): Promise<FlowPayload>
-  on(event: 'state' | 'flow' | 'tabs', listener: (payload: unknown) => void): () => void
+  on(event: 'state' | 'flow' | 'tabs' | 'ask', listener: (payload: unknown) => void): () => void
   tabs(): Promise<TabInfo[]>
   selectTab(key: string): Promise<{ error?: string }>
   closeTab(key: string): Promise<unknown>
@@ -152,6 +152,7 @@ export class Flow {
       this.changed()
     })
     this.api.on('flow', payload => this.takeFlow(payload as FlowPayload))
+    this.api.on('ask', payload => this.askAgent(payload === 'gemini' ? 'gemini' : 'codex'))
     this.api.on('tabs', payload => {
       this.tabs = payload as TabInfo[]
       this.changed()
@@ -397,6 +398,22 @@ export class Flow {
   target(): Lane {
     const at = this.input.match(/^@(codex|gemini)\b/i)
     return at ? (at[1]!.toLowerCase() as Lane) : 'claude'
+  }
+
+  private boxListeners = new Set<() => void>()
+  /** The box's text set from outside ("Ask Codex" in the Claude Code pane): each look puts it in
+   * its own field. */
+  onBox(fn: () => void): () => void {
+    this.boxListeners.add(fn)
+    return () => this.boxListeners.delete(fn)
+  }
+
+  /** An agent's page, the box addressed to it, keeping what is typed. */
+  askAgent(who: 'codex' | 'gemini') {
+    this.pane = who
+    this.input = `@${who} ` + this.input.replace(/^@(codex|gemini)\b\s*/i, '')
+    for (const fn of this.boxListeners) fn()
+    this.changed()
   }
 
   /** Tab: claude, then @codex, then @gemini, keeping what is typed. */

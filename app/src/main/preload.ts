@@ -10,7 +10,7 @@ const call =
   (...args: unknown[]) =>
     ipcRenderer.invoke(channel, ...args)
 
-const EVENTS = new Set(['state', 'lines', 'runs', 'project', 'companion', 'companion-row', 'flow', 'tabs'])
+const EVENTS = new Set(['state', 'lines', 'runs', 'project', 'companion', 'companion-row', 'flow', 'tabs', 'ask'])
 
 contextBridge.exposeInMainWorld('bridge', {
   state: call('state'),

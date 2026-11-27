@@ -262,6 +262,12 @@ async function toggleWhite($: EngineInterface) {
   await pollSidebar($)
 }
 
+/** Codex straight, without Claude between: Bridge opens on its Codex page, the box addressed to
+ * Codex. Where the app is not set up, the console beside the chat stands in. */
+async function askCodex($: EngineInterface) {
+  if (!(await openApp($, root, cwd, 'codex'))) await openConsole($)
+}
+
 async function setPause($: EngineInterface) {
   const { paused } = await read($, sidebar)
   const run = await flowSh($, ['answer', paused ? 'resume' : 'pause'], (await read($, sidebar)).flow)
@@ -363,7 +369,7 @@ export function registerSidebar(on: On) {
             <Box flexDirection="row" gap="xs" flexWrap="wrap" justifyContent="flex-end">
               {st.look === 'cli' ? press('pane-white', st.white ? 'Dark pane' : 'White pane', st.white ? '◑ dark' : '◐ white', th.dim, () => toggleWhite($), false) : null}
               {press('open-app', 'Open app', say('Open app ↗'), th.dim, () => openApp($, root, cwd), false)}
-              {press('open-console', 'Console', say('Console'), th.dim, () => openConsole($), false)}
+              {press('ask-codex', 'Ask Codex', say('Ask Codex ↗'), th.ok, () => askCodex($), false)}
             </Box>
             {await runsSection($, { Box, Button, Markdown, Text }, th)}
           </Box>

@@ -2,12 +2,13 @@ import type { EngineInterface } from 'claude-code'
 
 /**
  * Opens the Bridge desktop app on this session's folder (app/launch.js starts
- * it detached and exits). Says how to set it up when it isn't yet. True when it opened.
+ * it detached and exits), on an agent's page with the box addressed to it when `ask` names one.
+ * Says how to set it up when it isn't yet. True when it opened.
  */
-export async function openApp($: EngineInterface, pluginRoot: string, cwd: string): Promise<boolean> {
+export async function openApp($: EngineInterface, pluginRoot: string, cwd: string, ask?: 'codex' | 'gemini'): Promise<boolean> {
   const root = pluginRoot.replace(/[\\/]+$/, '')
   try {
-    const { exitCode, stdout } = await $.process.run(['node', `${root}/app/launch.js`, '--workdir', cwd], {
+    const { exitCode, stdout } = await $.process.run(['node', `${root}/app/launch.js`, '--workdir', cwd, ...(ask ? [`--ask=${ask}`] : [])], {
       timeoutMs: 120_000,
     })
     if (exitCode === 0) {

@@ -96,6 +96,14 @@ export class CliView {
       this.back = Math.max(0, this.back + Math.sign(event.deltaY) * -3)
     })
     on(window, 'focus', () => this.field.focus())
+    // "Ask Codex" from the Claude Code pane: the box addressed to it, the caret at its end
+    this.off.push(
+      this.flow.onBox(() => {
+        this.field.value = this.flow.input
+        this.field.focus()
+        this.field.setSelectionRange(this.field.value.length, this.field.value.length)
+      }),
+    )
   }
 
   private hotAt(event: MouseEvent): Hot | undefined {
@@ -773,6 +781,8 @@ export class CliView {
     })
     let rx = cols - 1
     const seg = (text: string, color: string, extra: { b?: boolean; bg?: string } = {}, run?: () => void) => {
+      // where the window is narrow, a segment that would run into the pages on the left is left out
+      if (rx - text.length <= sx + 1) return
       rx -= text.length
       term.put(rx, sy, text, color, { bg: C.bar, ...extra })
       if (run) this.hots.push({ x: rx, y: sy, w: text.length, run })
@@ -780,6 +790,9 @@ export class CliView {
     }
     seg(clock(t), C.dim)
     seg('look: terminal', C.dim, {}, () => void flow.setTheme('drawn'))
+    // the companion bar, switched where it is seen: always on, while work runs, off
+    const mode = flow.settings?.companion
+    if (mode) seg(`companion: ${mode === 'always' ? 'on' : mode}`, mode === 'always' ? C.fg : C.dim, {}, () => void flow.api.companionToggle())
     seg(flow.paused ? ' ▶ resume ' : 'pause', flow.paused ? C.bg : C.dim, flow.paused ? { bg: C.amber, b: true } : {}, () => void flow.togglePause())
     const phases = this.phases()
     if (frame.phase >= 0) seg(`${frame.phase + 1}/${phases.length} ${phases[frame.phase] ?? ''}`, C.dim)

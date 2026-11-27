@@ -1034,12 +1034,7 @@ function wireIpc() {
   })
   handle('companionToggle', async () => {
     // round the three: always on, shows while work runs, off
-    config.companion = config.companion === 'always' ? 'auto' : config.companion === 'auto' ? 'off' : 'always'
-    saveConfig()
-    // Turned on while nothing runs: show it for a few seconds so you see where it is.
-    previewUntil = config.companion === 'auto' ? Date.now() + 5000 : 0
-    await updateCompanion()
-    send('state', await snapshot())
+    await setCompanion(config.companion === 'always' ? 'auto' : config.companion === 'auto' ? 'off' : 'always')
   })
   // the window opens on the companion's top card
   handle('companionOpen', async () => {
@@ -1105,7 +1100,7 @@ function createCompanion() {
       spellcheck: false,
     },
   })
-  companion.setAlwaysOnTop(true, 'floating')
+  companion.setAlwaysOnTop(true, COMPANION_LEVEL)
   // the room kept above the bar lets clicks through until the pointer is on the bar (watchRow)
   companion.setIgnoreMouseEvents(true)
   barHover = false
@@ -1114,6 +1109,9 @@ function createCompanion() {
   companion.webContents.on('context-menu', () => {
     Menu.buildFromTemplate([
       { label: 'Open Bridge', click: () => openMain() },
+      { type: 'separator' },
+      { label: 'Always on', type: 'radio', checked: config.companion === 'always', click: () => void setCompanion('always') },
+      { label: 'Only while work runs', type: 'radio', checked: config.companion === 'auto', click: () => void setCompanion('auto') },
       { type: 'separator' },
       { label: 'Quit Bridge', click: () => app.quit() },
     ]).popup({ window: companion ?? undefined })
@@ -1185,6 +1183,34 @@ function watchRow() {
   }, 66)
 }
 
+/** "Ask Codex" from the Claude Code pane (--ask codex): the window opens on that agent's page,
+ * its box addressed to it. Held until the window's page has loaded. */
+let pendingAsk: 'codex' | 'gemini' | null = null
+function askFromArgs(argv: string[]): 'codex' | 'gemini' | null {
+  // one word (--ask=codex): a second launch hands its arguments over with switches and values apart
+  const one = argv.find(arg => arg.startsWith('--ask='))
+  const at = argv.indexOf('--ask')
+  const who = one ? one.slice(6) : at === -1 ? null : argv[at + 1]
+  return who === 'codex' || who === 'gemini' ? who : null
+}
+function askAgent(who: 'codex' | 'gemini') {
+  if (window && !window.webContents.isLoading()) send('ask', who)
+  else pendingAsk = who
+  openMain()
+}
+
+/** The companion's setting, from the settings, the window's bar or the companion's own menu. */
+async function setCompanion(mode: Config['companion']) {
+  config.companion = mode
+  saveConfig()
+  // Turned on while nothing runs: show it for a few seconds so you see where it is.
+  previewUntil = mode === 'auto' ? Date.now() + 5000 : 0
+  // no longer always on with the window closed: the window comes back, so Bridge is never left unseen
+  if (mode !== 'always' && !window) openMain()
+  await updateCompanion()
+  send('state', await snapshot())
+}
+
 /** The window, brought up; made again where it was closed while the companion stayed. */
 function openMain() {
   if (!window) {
@@ -1223,6 +1249,15 @@ function companionState() {
   }
 }
 
+/** Above other windows. A see-through window asked for the 'floating' level never gets it on
+ * Windows (Electron 45: an ordinary window in that corner covered the bar), so the bar takes the
+ * 'screen-saver' level, set again when it shows and whenever Windows has dropped it. */
+const COMPANION_LEVEL = 'screen-saver' as const
+function keepCompanionOnTop() {
+  if (companion?.isVisible() && !companion.isAlwaysOnTop()) companion.setAlwaysOnTop(true, COMPANION_LEVEL)
+}
+setInterval(keepCompanionOnTop, 4000)
+
 /** Shows, updates or fades the bar: while anything runs or waits for you, and a little after. */
 async function updateCompanion() {
   if (!companion) return
@@ -1241,6 +1276,7 @@ async function updateCompanion() {
     const height = companionSize().height
     companion.setBounds(companionHome(height))
     companion.showInactive()
+    keepCompanionOnTop()
   }
   companion.webContents.send('companion', { ...state, visible })
   if (!visible && companion.isVisible()) {
@@ -1298,6 +1334,10 @@ function createWindow() {
     return { action: 'deny' }
   })
   window.webContents.on('will-navigate', event => event.preventDefault())
+  window.webContents.on('did-finish-load', () => {
+    if (pendingAsk) send('ask', pendingAsk)
+    pendingAsk = null
+  })
   void window.loadFile(join(__dirname, 'index.html'))
   window.on('closed', () => {
     window = null
@@ -1431,7 +1471,9 @@ if (!app.requestSingleInstanceLock()) {
   app.on('second-instance', (_event, argv) => {
     const dir = workdirFromArgs(argv)
     if (dir && dir !== config.workdir) void setWorkdir(dir)
-    openMain()
+    const who = askFromArgs(argv)
+    if (who) askAgent(who)
+    else openMain()
   })
 
   // its own name in the taskbar, so Windows shows the app's logo and not Electron's
@@ -1460,6 +1502,7 @@ if (!app.requestSingleInstanceLock()) {
     if ('path' in found) bash = found.path
     else bashError = found.error
     wireIpc()
+    pendingAsk = askFromArgs(process.argv)
     const fromArgs = workdirFromArgs(process.argv)
     await setWorkdir(fromArgs ?? config.workdir)
     createWindow()
