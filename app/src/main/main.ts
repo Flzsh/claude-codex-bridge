@@ -13,6 +13,7 @@ import { CODEX_MODELS, shortTitle, SIZES, type Size, STAGES } from '../../../cor
 import { fold } from '../../../core/flow'
 import { DEFAULT_WORKFLOW, normalizeWorkflow, parseWorkflow, type Workflow as Steps } from '../../../core/workflow'
 import { EFFORTS, providerName } from '../../../core/jobs'
+import { buildIfStale } from '../../stale.cjs'
 import { findBash } from './bash'
 import { answerGate, flowPayload, isLive, queuePause, safeId, setPaused, steerClaude, steerStep, type FlowPayload } from './flow'
 import type { Mode, Paths, RunHandle, RunResult, Threads } from './contracts'
@@ -36,7 +37,8 @@ import { finish, newThreads, reserve, reset } from './threads'
 // dist/main.cjs -> app/dist -> app -> the plugin's folder.
 const PLUGIN_ROOT = resolve(__dirname, '..', '..')
 // The app's logo: the terminal prompt, its > drawn as the workflow (app/assets).
-const ICON = join(__dirname, '..', 'assets', process.platform === 'win32' ? 'icon.ico' : 'icon-256.png')
+const APP_DIR = join(__dirname, '..')
+const ICON = join(APP_DIR, 'assets', process.platform === 'win32' ? 'icon.ico' : 'icon-256.png')
 const paths: Paths = pluginPaths(PLUGIN_ROOT)
 const SWEEP_MS = 2000
 const KEEP_ENTRIES = 300
@@ -71,14 +73,13 @@ type Config = {
   lines: Record<string, Record<Provider, Line[]>>
   codexModel: string
   mode: Mode
-  /** The companion bar: shown while anything runs ('auto'), or never ('off'). */
+  /** The companion bar: always on (the default; it stays when the window closes), shown while
+   * anything runs ('auto'), or never ('off'). */
   companion: 'auto' | 'always' | 'off'
   /** Where the companion bar was left (its window's top-left), or null for the default corner. */
   companionAt: { x: number; y: number } | null
   /** The look: a terminal program, or drawn by hand. */
   theme: 'cli' | 'drawn'
-  /** The Claude Code pane in the terminal look: on dark, or on white for Claude Code's light theme. */
-  pane: 'dark' | 'white'
   /** The flow shown, or null for the newest. */
   shownFlow: string | null
 }
@@ -91,10 +92,9 @@ const DEFAULT_CONFIG: Config = {
   lines: {},
   codexModel: 'gpt-6.2-sol',
   mode: 'read-only',
-  companion: 'auto',
+  companion: 'always',
   companionAt: null,
   theme: 'cli',
-  pane: 'dark',
   shownFlow: null,
 }
 
@@ -123,8 +123,7 @@ const configFile = () => join(app.getPath('userData'), 'bridge.json')
 async function loadConfig() {
   try {
     config = { ...DEFAULT_CONFIG, ...(JSON.parse(await readFile(configFile(), 'utf8')) as Partial<Config>) }
-    if (!['auto', 'always', 'off'].includes(config.companion)) config.companion = 'auto'
-    if (config.pane !== 'white') config.pane = 'dark'
+    if (!['auto', 'always', 'off'].includes(config.companion)) config.companion = 'always'
   } catch {
     config = { ...DEFAULT_CONFIG }
   }
@@ -218,7 +217,7 @@ async function snapshot() {
     efforts,
     companion: config.companion,
     theme: config.theme,
-    pane: config.pane,
+    pane: paneGround,
     models: [...CODEX_MODELS],
     effortChoices: { codex: [...EFFORTS.codex], gemini: [...EFFORTS.gemini] },
     bashError,
@@ -322,6 +321,8 @@ async function sweep() {
     // A file mid-write: the next sweep reads it.
   }
   await readWorkflows().catch(() => undefined)
+  // the pane's ground, switched in the Claude Code pane
+  if (await readPaneGround()) send('state', await snapshot())
   // the owner's steps, edited here or by hand
   if (await readWorkflowFile().catch(() => false)) {
     send('state', await snapshot())
@@ -615,11 +616,27 @@ function announceGate(title: string, summary: string, noAuto: boolean) {
 }
 
 /** The look: the window's own colours follow it. */
-/** Tells the Claude Code pane which look to draw in, and on which ground: <plugin>/status/look.json. */
-async function writeLook() {
+/** The Claude Code pane's ground in the terminal look, dark or white. It lives in look.json, where
+ * the pane's own switch and this app's setting both change it; true when it changed. */
+let paneGround: 'dark' | 'white' = 'dark'
+async function readPaneGround(): Promise<boolean> {
+  let next: 'dark' | 'white' = 'dark'
   try {
+    next = (JSON.parse(await readFile(join(PLUGIN_ROOT, 'status', 'look.json'), 'utf8')) as { pane?: unknown }).pane === 'white' ? 'white' : 'dark'
+  } catch {
+    // none yet, or mid-write: dark until it reads
+  }
+  const changed = next !== paneGround
+  paneGround = next
+  return changed
+}
+
+/** Tells the Claude Code pane which look to draw in, and on which ground: <plugin>/status/look.json. */
+async function writeLook(reread = true) {
+  try {
+    if (reread) await readPaneGround()
     await mkdir(join(PLUGIN_ROOT, 'status'), { recursive: true })
-    await writeFile(join(PLUGIN_ROOT, 'status', 'look.json'), JSON.stringify({ theme: config.theme, pane: config.pane }))
+    await writeFile(join(PLUGIN_ROOT, 'status', 'look.json'), JSON.stringify({ theme: config.theme, pane: paneGround }))
   } catch {
     // the pane keeps its last look
   }
@@ -1010,14 +1027,14 @@ function wireIpc() {
   })
   // the Claude Code pane's ground, dark or white (the terminal look; the drawn one is paper)
   handle('paneToggle', async () => {
-    config.pane = config.pane === 'white' ? 'dark' : 'white'
-    saveConfig()
-    await writeLook()
+    await readPaneGround()
+    paneGround = paneGround === 'white' ? 'dark' : 'white'
+    await writeLook(false)
     send('state', await snapshot())
   })
   handle('companionToggle', async () => {
-    // round the three: shows while work runs, always on, off
-    config.companion = config.companion === 'auto' ? 'always' : config.companion === 'always' ? 'off' : 'auto'
+    // round the three: always on, shows while work runs, off
+    config.companion = config.companion === 'always' ? 'auto' : config.companion === 'auto' ? 'off' : 'always'
     saveConfig()
     // Turned on while nothing runs: show it for a few seconds so you see where it is.
     previewUntil = config.companion === 'auto' ? Date.now() + 5000 : 0
@@ -1093,6 +1110,14 @@ function createCompanion() {
   companion.setIgnoreMouseEvents(true)
   barHover = false
   watchRow()
+  // a right click on the bar: open the window, or quit (with the window closed, the bar is all there is)
+  companion.webContents.on('context-menu', () => {
+    Menu.buildFromTemplate([
+      { label: 'Open Bridge', click: () => openMain() },
+      { type: 'separator' },
+      { label: 'Quit Bridge', click: () => app.quit() },
+    ]).popup({ window: companion ?? undefined })
+  })
   companion.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
   companion.webContents.on('will-navigate', event => event.preventDefault())
   // Where it was dragged to: remembered by its bottom-right corner, so hovering (which grows it upward) never shifts it.
@@ -1160,8 +1185,12 @@ function watchRow() {
   }, 66)
 }
 
+/** The window, brought up; made again where it was closed while the companion stayed. */
 function openMain() {
-  if (!window) return
+  if (!window) {
+    createWindow()
+    return
+  }
   if (window.isMinimized()) window.restore()
   window.show()
   window.focus()
@@ -1272,7 +1301,10 @@ function createWindow() {
   void window.loadFile(join(__dirname, 'index.html'))
   window.on('closed', () => {
     window = null
-    app.quit()
+    // with the companion always on, Bridge stays: the bar keeps following the work, and a click on
+    // it (or Bridge in the Start menu) opens the window again; a right click quits
+    if (SHOT_DIR || config.companion !== 'always' || !companion) app.quit()
+    else void updateCompanion()
   })
 }
 
@@ -1363,16 +1395,43 @@ async function shoot() {
   app.quit()
 }
 
+/** Bridge in the Start menu, found and opened like any app (and pinned to the taskbar from
+ * there), kept pointing at this copy of the app. */
+function ensureStartMenu() {
+  if (process.platform !== 'win32' || SHOT_DIR) return
+  const link = join(app.getPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Bridge.lnk')
+  const want = { target: process.execPath, args: `"${APP_DIR}"`, cwd: APP_DIR, icon: ICON, iconIndex: 0, appUserModelId: 'Bridge', description: 'Bridge: Claude, Codex and Gemini at work' }
+  try {
+    if (existsSync(link)) {
+      const have = shell.readShortcutLink(link)
+      if (have.target === want.target && have.args === want.args && have.icon === want.icon) return
+    }
+    shell.writeShortcutLink(link, existsSync(link) ? 'replace' : 'create', want)
+  } catch {
+    // Bridge still opens with /bridge
+  }
+}
+
+/** Opened from the Start menu (launch.js builds first and says so with --built): a build older than
+ * its sources (a plugin update) is built again, and Bridge opens on the new one. */
+function rebuiltForStart(): boolean {
+  if (SHOT_DIR || process.argv.includes('--built')) return false
+  const result = buildIfStale(APP_DIR, { node: process.execPath, env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, quiet: true })
+  if (result === 'failed') dialog.showErrorBox('Bridge', 'Bridge could not be built after an update. Open it once with /bridge in Claude Code to see why.')
+  return result === 'built'
+}
+
 if (!app.requestSingleInstanceLock()) {
   app.quit()
+} else if (rebuiltForStart()) {
+  app.releaseSingleInstanceLock()
+  app.relaunch({ args: [...process.argv.slice(1), '--built'] })
+  app.exit(0)
 } else {
   app.on('second-instance', (_event, argv) => {
     const dir = workdirFromArgs(argv)
     if (dir && dir !== config.workdir) void setWorkdir(dir)
-    if (window) {
-      if (window.isMinimized()) window.restore()
-      window.focus()
-    }
+    openMain()
   })
 
   // its own name in the taskbar, so Windows shows the app's logo and not Electron's
@@ -1405,6 +1464,7 @@ if (!app.requestSingleInstanceLock()) {
     await setWorkdir(fromArgs ?? config.workdir)
     createWindow()
     createCompanion()
+    ensureStartMenu()
     sweepTimer = setInterval(() => void sweep(), SWEEP_MS)
     if (SHOT_DIR) window?.once('ready-to-show', () => void shoot())
   })

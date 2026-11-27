@@ -826,7 +826,8 @@ function wrap(text: string, chars: number, most: number): string[] {
 /** What the pane shows with no workflow running: Claude's state, the last workflow, recent runs. */
 export type EmptyModel = {
   busy: boolean
-  last: { title: string; finished: boolean; summary: string; lanes: Lane[]; steps: number; reviews: number; ago: string } | null
+  /** `by`: how many of its steps each lane did (reviews apart). */
+  last: { title: string; finished: boolean; summary: string; by: Partial<Record<Lane, number>>; steps: number; reviews: number; ago: string } | null
   runs: { provider: 'codex' | 'gemini'; title: string; state: 'running' | 'done' | 'failed' | 'lost'; ago: string }[]
 }
 
@@ -850,7 +851,7 @@ export function lastFlow(events: readonly FlowEvent[], id: string | null, at: nu
     title: start.title ?? 'workflow',
     finished: Boolean(end),
     summary: end?.summary ?? '',
-    lanes: list.map(s => s.lane).slice(0, 26),
+    by: list.filter(s => s.kind !== 'gate').reduce<Partial<Record<Lane, number>>>((by, s) => ({ ...by, [s.lane]: (by[s.lane] ?? 0) + 1 }), {}),
     steps: list.filter(s => s.kind !== 'gate').length,
     reviews: list.filter(s => s.kind === 'gate').length,
     ago: ago(at - (end?.t ?? mine[mine.length - 1]!.t)),
@@ -952,25 +953,52 @@ export function emptySvg(m: EmptyModel, look: Look, width: number = PANE_W, sett
   })
   y += 2
 
-  // the last workflow: its steps by who did them, how it ended and when
+  // the last workflow: what it was, how it ended and when, and who did its steps, in words
   if (m.last) {
     const l = m.last
     body += skin.rule(PAD, y, W - PAD, 'shape-last')
     y += 22
-    body += t(PAD + 4, y, skin === cli ? 'last workflow' : 'Last workflow', skin.dim, sz.small, `font-weight="700" ${italic}`)
+    const label = skin === cli ? 'last workflow' : 'Last workflow'
+    body += t(PAD + 4, y, label, skin.dim, sz.small, `font-weight="700" ${italic}`)
     const end = `${l.finished ? '✓ finished' : 'stopped'} · ${l.ago}`
-    body += t(W - PAD - 2, y, end, l.finished ? skin.green : skin.faint, sz.small, `text-anchor="end" ${italic}`)
+    const endColour = l.finished ? skin.green : skin.faint
+    // beside the label where both fit, else on a line of its own (never printed over it)
+    if (label.length + end.length + 2 <= chars(W - 2 * PAD - 6, sz.small)) body += t(W - PAD - 2, y, end, endColour, sz.small, `text-anchor="end" ${italic}`)
+    else body += t(PAD + 4, (y += 16), end, endColour, sz.small, italic)
     y += 22
     body += t(PAD + 4, y, fit(l.title, chars(W - 2 * PAD - 8)), skin.ink, sz.text, 'font-weight="700"')
-    y += 18
-    l.lanes.forEach((lane, i) => {
-      const x = PAD + 10 + i * 16
-      if (i) body += skin.seg(x - 11, y, x - 5, y, l.lanes[i - 1]!)
-      body += skin.node(x, y, 'done', [lane], `last${i}`)
+    y += 20
+    // "6 steps · claude 3 · codex 1 · 1 review", each name in its lane's colour: one line of text
+    // in coloured parts (so the words space themselves), wrapped between parts where it runs out
+    type Part = { text: string; colour: string; bold?: boolean }
+    const items: Part[][] = [[{ text: `${l.steps} step${l.steps === 1 ? '' : 's'}`, colour: skin.faint }]]
+    for (const lane of LANES) {
+      const n = l.by[lane]
+      if (n) items.push([{ text: skin === cli ? lane : NAME[lane], colour: skin.lane(lane), bold: true }, { text: ` ${n}`, colour: skin.faint }])
+    }
+    if (l.reviews) items.push([{ text: `${l.reviews} review${l.reviews === 1 ? '' : 's'}`, colour: skin.faint }])
+    // a little wider than the type's average, so a line never runs past the edge
+    const room = chars(W - 2 * PAD - 8, sz.small) * 0.92
+    const lines: Part[][] = [[]]
+    let used = 0
+    for (const parts of items) {
+      const length = parts.reduce((sum, part) => sum + part.text.length, 0)
+      const line = lines[lines.length - 1]!
+      if (line.length && used + 3 + length > room) {
+        lines.push([...parts])
+        used = length
+      } else {
+        if (line.length) line.push({ text: ' · ', colour: skin.faint })
+        line.push(...parts)
+        used += (line.length > parts.length ? 3 : 0) + length
+      }
+    }
+    lines.forEach((line, i) => {
+      if (i) y += 16
+      const spans = line.map(part => `<tspan fill="${part.colour}"${part.bold ? ' font-weight="700"' : ''}>${esc(part.text)}</tspan>`).join('')
+      body += `<text x="${f(PAD + 4)}" y="${f(y)}" ${ATTR(skin, sz.small, skin.faint, italic)} style="white-space:pre">${spans}</text>`
     })
-    const count = `${l.steps} step${l.steps === 1 ? '' : 's'}${l.reviews ? ` · ${l.reviews} review${l.reviews === 1 ? '' : 's'}` : ''}`
-    body += t(W - PAD - 2, y + 4, count, skin.faint, sz.small, `text-anchor="end" ${italic}`)
-    y += 12
+    y += 2
     if (l.summary) {
       for (const line of wrap(l.summary, chars(W - 2 * PAD - 8, sz.small), 2)) {
         y += 16

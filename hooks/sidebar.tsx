@@ -242,6 +242,26 @@ async function answer($: EngineInterface, kind: 'approve' | 'decline' | 'steer',
   await pollSidebar($)
 }
 
+/** The terminal look on dark or on white, switched from the pane itself. The choice is kept in
+ * look.json beside the app's look; the app reads it back, so its setting shows the same. */
+async function toggleWhite($: EngineInterface) {
+  const file = `${root}/status/look.json`
+  let saved: Record<string, unknown> = {}
+  try {
+    const parsed: unknown = JSON.parse(await readText($, file))
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) saved = parsed as Record<string, unknown>
+  } catch {
+    // none yet: the terminal look on dark
+  }
+  const pane = saved.pane === 'white' ? 'dark' : 'white'
+  try {
+    await $.fs.write(file, JSON.stringify({ ...saved, theme: saved.theme === 'drawn' ? 'drawn' : 'cli', pane }))
+  } catch {
+    return say($, 'Could not switch the pane.')
+  }
+  await pollSidebar($)
+}
+
 async function setPause($: EngineInterface) {
   const { paused } = await read($, sidebar)
   const run = await flowSh($, ['answer', paused ? 'resume' : 'pause'], (await read($, sidebar)).flow)
@@ -341,6 +361,7 @@ export function registerSidebar(on: On) {
             {parts}
             {st.notice ? words(st.notice) : null}
             <Box flexDirection="row" gap="xs" flexWrap="wrap" justifyContent="flex-end">
+              {st.look === 'cli' ? press('pane-white', st.white ? 'Dark pane' : 'White pane', st.white ? '◑ dark' : '◐ white', th.dim, () => toggleWhite($), false) : null}
               {press('open-app', 'Open app', say('Open app ↗'), th.dim, () => openApp($, root, cwd), false)}
               {press('open-console', 'Console', say('Console'), th.dim, () => openConsole($), false)}
             </Box>

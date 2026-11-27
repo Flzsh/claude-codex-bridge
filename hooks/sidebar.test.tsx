@@ -133,10 +133,19 @@ test('the terminal look on white, for Claude Code in its light theme; the drawn 
   let card = await ui.find({ type: 'Box' })
   expect([card?.props.backgroundColor, card?.props.borderColor]).toEqual([PANE_THEME_WHITE.ground, PANE_THEME_WHITE.edge])
   await ui.unmount()
+  // switched from the pane itself, in the terminal look
+  ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  expect((await ui.find({ type: 'Button', key: 'pane-white' }))?.props.label).toBe('Dark pane')
+  await ui.unmount()
+  state = { ...state, white: false }
+  ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  expect((await ui.find({ type: 'Button', key: 'pane-white' }))?.props.label).toBe('White pane')
+  await ui.unmount()
   state = { ...state, look: 'drawn' }
   ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
   card = await ui.find({ type: 'Box' })
   expect(card?.props.backgroundColor).toBe(PANE_THEME.drawn.ground)
+  expect(await ui.find({ type: 'Button', key: 'pane-white' })).toBe(undefined)
   await ui.unmount()
 })
 

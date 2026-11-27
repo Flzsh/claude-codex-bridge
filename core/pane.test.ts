@@ -222,7 +222,8 @@ group('the pane with no workflow', () => {
     expect(last.title).toBe('ship <it>')
     expect(last.finished).toBe(true)
     expect(last.summary).toBe('shipped & checked')
-    expect(last.lanes[0]).toBe('you')
+    // who did its steps (the review apart)
+    expect(Object.values(last.by).reduce((a, b) => a + b, 0)).toBe(7)
     // eight in all: seven steps and one review
     expect(last.steps).toBe(7)
     expect(last.reviews).toBe(1)

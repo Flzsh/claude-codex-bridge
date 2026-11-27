@@ -39,6 +39,8 @@ export class TabStrip {
   private build(tabs: TabInfo[]) {
     this.el.replaceChildren()
     this.items = []
+    // the folder only where the tabs' folders differ: the same name on every tab tells nothing
+    const folders = new Set(tabs.filter(tab => tab.flow !== null).map(tab => tab.folder))
     tabs.forEach((tab, i) => {
       const el = document.createElement('div')
       el.className = `tab m-${tab.mark}${tab.active ? ' on' : ''}`
@@ -48,7 +50,7 @@ export class TabStrip {
       if (this.look === 'cli') mark.style.color = TAB_COLOURS[tab.mark]
       el.append(mark, span('tt', tab.title))
       // the folder, where it says something the title does not
-      if (tab.flow !== null) el.append(span('fd', tab.folder))
+      if (tab.flow !== null && folders.size > 1) el.append(span('fd', tab.folder))
       if (tab.flow !== null) {
         const close = document.createElement('button')
         close.className = 'x'

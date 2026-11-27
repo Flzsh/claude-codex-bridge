@@ -46,19 +46,19 @@ The command center for the three agents. You start in Claude as always; when Cla
 - **The steer box** at the bottom: plain text goes to Claude (picked up at its next step while it works, or as a new prompt when it is idle); start with `@codex` or `@gemini` to ask that agent directly, and its run appears in its lane.
 - **The side pane**: the selected step (progress, brief, result), a page per agent, and the settings (folder, look, the Claude Code pane on dark or white, companion, Codex model and effort, whether Codex may edit files).
 - **Two looks**: a terminal program, and a hand-drawn one. Switch with Ctrl+T or in the settings.
-- **The companion bar**: a small bar that floats over other windows while anything works or waits for you, with Approve and Pause right in it. Hover it for the steps and the latest events. With several workflows it is a deck: the one that needs you is on top, the others peek behind it, and the count on its corner brings the next one up. Its buttons answer the card on top; click the card to open its tab. Set it to **always on** in the settings to keep it up even when nothing runs, so you can follow every workflow and agent without the Claude app.
+- **The companion bar**: a small bar that floats over other windows, with Approve and Pause right in it. It is always on: close Bridge's window and the bar stays, so you can follow every workflow and agent without the Claude app or the window; right-click it to open Bridge again or quit. Hover it for the steps and the latest events. With several workflows it is a deck: the one that needs you is on top, the others peek behind it, and the count on its corner brings the next one up. Its buttons answer the card on top; click the card to open its tab. In the settings it can instead show only while work runs, or stay off.
 - **The review queue**: when reviews that carry on by themselves wait in several workflows at once, only the one on top counts down; the others wait their turn and get their full 30 seconds when it comes, so nothing is approved while you can't see it.
 
 Claude writes the flow with `skills/codex-bridge/flow.sh` (the skill says when); Codex and Gemini runs join it by themselves. Everything is in `.bridge/flow.jsonl` in your project, one line per event, plus `.bridge/control/` for your answers.
 
-Open it with **Open app** on the pane or `/bridge`. Set it up once (it needs Node.js):
+Open it with **Open app** on the pane or `/bridge`. On Windows it also adds itself to the Start menu the first time it opens: search for **Bridge** to open it like any app, or pin it to the taskbar from there. Opened that way after a plugin update, it builds itself again first. Set it up once (it needs Node.js):
 
 ```bash
 cd <plugin folder>/app
 npm ci
 ```
 
-`/bridge` says where the plugin folder is if the app isn't set up yet. The app runs from the plugin folder; there is no installer.
+`/bridge` says where the plugin folder is if the app isn't set up yet. The app runs from the plugin folder; there is no installer (the Start menu entry points there).
 
 ## The console
 
