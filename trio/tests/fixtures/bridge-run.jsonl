@@ -1,0 +1,9 @@
+{"schema_version":1,"run_id":"demo","timestamp_ms":1000,"type":"phase","phase":2,"agent":"gemini","status":"running"}
+{"schema_version":1,"run_id":"demo","timestamp_ms":2500,"type":"phase","phase":2,"agent":"gemini","status":"succeeded"}
+{"schema_version":1,"run_id":"demo","timestamp_ms":3000,"type":"gate","phase":3,"agent":"claude","status":"waiting","gate":"plan","gate_id":"0e088819a0a54ff59fffa324c8387ad1","revision":"plan-1","deadline_ms":33000}
+{"schema_version":1,"run_id":"demo","timestamp_ms":33000,"type":"gate","phase":3,"agent":"workflow","status":"continued_after_timeout","gate":"plan","gate_id":"0e088819a0a54ff59fffa324c8387ad1","revision":"plan-1","deadline_ms":33000}
+{"schema_version":1,"run_id":"demo","timestamp_ms":41000,"type":"phase","phase":5,"agent":"codex","status":"running"}
+{"schema_version":1,"run_id":"demo","timestamp_ms":43000,"type":"phase","phase":5,"agent":"codex","status":"failed"}
+{"schema_version":1,"run_id":"demo","timestamp_ms":45000,"type":"phase","phase":5,"agent":"claude","status":"degraded"}
+{"schema_version":1,"run_id":"demo","timestamp_ms":55000,"type":"phase","phase":6,"agent":"claude","status":"succeeded"}
+{"schema_version":1,"run_id":"demo","timestamp_ms":59000,"type":"gate","phase":7,"agent":"claude","status":"waiting","gate":"push","gate_id":"71c5db4e574d44b6944fd529b67aa6c6","revision":"push-demo","deadline_ms":null}

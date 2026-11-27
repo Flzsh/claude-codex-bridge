@@ -1,0 +1,11 @@
+{
+  "name": "trio-claude-gemini-codex",
+  "displayName": "Trio: Claude + Gemini + Codex",
+  "version": "1.1.1",
+  "description": "Run a feature end to end with three AI models as a team: Claude leads, Gemini gives independent second opinions, Codex builds backend pieces and reviews the PR. Uses the Antigravity CLI and Codex CLI with your own subscriptions.",
+  "author": { "name": "garywu000", "url": "https://github.com/garywu000" },
+  "homepage": "https://github.com/garywu000/trio-claude-gemini-codex",
+  "repository": "https://github.com/garywu000/trio-claude-gemini-codex",
+  "license": "MIT",
+  "keywords": ["workflow", "multi-model", "gemini", "antigravity", "codex", "code-review", "testing", "visual-qa"]
+}
