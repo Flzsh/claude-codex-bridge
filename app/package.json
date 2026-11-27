@@ -2,7 +2,7 @@
   "name": "bridge-app",
   "private": true,
   "version": "0.6.3",
-  "description": "Bridge: the desktop app of the claude-codex-bridge plugin",
+  "description": "Bridge: the desktop app of the claude-bridge plugin",
   "main": "dist/main.cjs",
   "scripts": {
     "build": "node build.mjs",

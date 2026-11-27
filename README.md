@@ -1,6 +1,48 @@
-# claude-codex-bridge
+<p align="center">
+  <img src="app/assets/icon.svg" width="88" alt="The Bridge logo: a terminal prompt whose arrow is three squares, for Claude, Gemini and Codex">
+</p>
 
-A Claude Code plugin that lets Claude hand routine work to OpenAI Codex, so your ChatGPT plan does the token-heavy work and your Claude usage goes further, without lowering quality. It can also ask Gemini (through Google's Antigravity CLI) for an independent second plan and a review of interaction and copy. Since 0.3.0 the three share a project folder, so what one learns the others see, and a desktop app, **Bridge**, is the command center: you watch the workflow happen live, lane by lane, review a plan when it is ready (it carries on by itself after 30 seconds), and steer, pause or decline at any point. Since 0.4.0 the same workflow shows in the Bridge pane beside the chat in Claude Code, drawn in the app's look. Since 0.5.0 Bridge follows every workflow at once, in any folder or session: a tab for each, like a browser, and the companion stacks them like a deck. Since 0.6.0 the steps of each workflow size are yours to edit.
+<h1 align="center">Bridge</h1>
+
+<p align="center"><b>Claude leads, Codex builds, Gemini double-checks, and you watch all three at work.</b><br>
+A Claude Code plugin and a desktop app, on the subscriptions you already have.</p>
+
+<p align="center">
+  <img alt="Version 0.6.3" src="https://img.shields.io/badge/version-0.6.3-d97757?style=flat-square">
+  <img alt="A Claude Code plugin" src="https://img.shields.io/badge/Claude%20Code-plugin-151413?style=flat-square">
+  <img alt="MIT license" src="https://img.shields.io/badge/license-MIT-5f6f45?style=flat-square">
+</p>
+
+<p align="center">
+  <img src="docs/images/bridge-drawn.png" width="820" alt="The Bridge app in its hand-drawn look: tabs for three workflows, lanes for You, Claude, Gemini and Codex, and the steps of a workflow joined by lines">
+</p>
+
+Bridge lets Claude hand routine work to OpenAI Codex, so your ChatGPT plan does the token-heavy work and your Claude usage goes further, without lowering quality. It can also ask Gemini (through Google's Antigravity CLI) for an independent second plan and a review of interaction and copy. The three share a project folder, so what one learns the others see.
+
+The desktop app, also called **Bridge**, is the command center: every workflow, in any folder or session, runs live in its own tab, lane by lane. You review a plan when it is ready (it carries on by itself after 30 seconds), and steer, pause or decline at any point. A companion bar keeps every workflow in view over your other windows, and the same picture sits in a pane beside the chat in Claude Code.
+
+<table>
+  <tr>
+    <td width="58%"><img src="docs/images/bridge-terminal.png" alt="The Bridge app in its terminal look, showing a workflow's steps by lane"></td>
+    <td><img src="docs/images/pane.png" alt="The Bridge pane beside the chat in Claude Code, on dark and on white"></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>The terminal look</sub></td>
+    <td align="center"><sub>The pane beside the chat, on dark or white</sub></td>
+  </tr>
+</table>
+
+<details>
+<summary><b>What's new</b></summary>
+
+- **0.6.3** Ask Codex from the pane opens Bridge on its Codex page; a companion switch you can see; the companion stays above other windows.
+- **0.6.2** Bridge in the Start menu; the companion always on; the pane on white; the drawn look's tabs fixed.
+- **0.6.0** The steps of each workflow size are yours to edit.
+- **0.5.0** Every workflow at once, in tabs, and the companion as a deck.
+- **0.4.0** The Bridge pane beside the chat in Claude Code.
+- **0.3.0** The shared project and the Bridge app.
+
+</details>
 
 ```
 Claude (plans, routes, checks the result, writes the frontend)
@@ -109,16 +151,16 @@ Start one from the app's Workflow screen, or `/project start <goal>` in a consol
 At the prompt of a Claude Code terminal session:
 
 ```
-/plugin install codex-bridge --marketplace Flzsh/claude-codex-bridge
+/plugin install codex-bridge --marketplace Flzsh/claude-bridge
 ```
 
 From a shell:
 
 ```bash
-claude plugin install codex-bridge --marketplace Flzsh/claude-codex-bridge
+claude plugin install codex-bridge --marketplace Flzsh/claude-bridge
 ```
 
-In the desktop app, where `/plugin` does not run: click + next to the prompt box, then Plugins, Add marketplace with `Flzsh/claude-codex-bridge`, then Add plugin.
+In the desktop app, where `/plugin` does not run: click + next to the prompt box, then Plugins, Add marketplace with `Flzsh/claude-bridge`, then Add plugin.
 
 Answer `y` to add the marketplace and pick the user scope. The band appears in sessions started after the install.
 
