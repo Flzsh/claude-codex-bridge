@@ -8,6 +8,13 @@
     {
       "name": "codex-bridge",
       "source": "./"
+    },
+    {
+      "name": "trio-claude-gemini-codex",
+      "source": "./trio/plugins/trio-claude-gemini-codex",
+      "description": "By Gary Wu: Claude leads and builds the frontend; Gemini gives independent plans, design review, acceptance tests and screenshot QA; Codex builds backend tickets and reviews the PR. macOS and Linux.",
+      "version": "1.1.1",
+      "category": "development"
     }
   ]
 }

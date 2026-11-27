@@ -190,6 +190,16 @@ For Gemini, set these in the same `env` block if needed: `AGY_BIN` points at a s
 3. The run is saved in the plugin's `runs/` folder (brief, log, reply, status), which is what the band, the app and the console read.
 4. Claude reads the reply, checks the diff and runs the checks itself. If the work is wrong it sends one correction, then finishes the job itself.
 
+## Also here: Trio, by Gary Wu
+
+[Trio](trio/README.md) is a second plugin in this marketplace, made by [Gary Wu (@garywu000)](https://github.com/garywu000) and merged here from [garywu000/trio-claude-gemini-codex](https://github.com/garywu000/trio-claude-gemini-codex) with its history. Where Bridge sizes each task and keeps the steps yours to edit, Trio runs one fixed, thorough path for a whole feature: Claude and Gemini plan apart and merge, Gemini reviews the design and writes acceptance tests from the contract alone, Codex builds backend pieces on its own branch, Gemini checks screenshots, and Codex reviews the pull request. It also keeps a record of each run in `.multimodel/tasks/`.
+
+```
+/plugin install trio-claude-gemini-codex --marketplace Flzsh/claude-bridge
+```
+
+Before you pick it: Trio runs on macOS and Linux (on Windows, use WSL), and the Bridge app does not show its runs yet, since Trio writes its own event record rather than Bridge's. Its own [README](trio/README.md) covers what it needs and how a run goes.
+
 ## License
 
-MIT
+MIT. Trio is MIT too, © Gary Wu.
